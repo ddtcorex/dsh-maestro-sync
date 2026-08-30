@@ -17,3 +17,4 @@ jobs:
     uses: ddtcorex/dsh-maestro-ci/.github/workflows/node-plugin.yml@7acac89da2ba99457f8b4edfc683ce621ecacc21
     with:
       pnpm-version: ""
+      sibling-repos: "dsh-maestro-config-lib@master"
