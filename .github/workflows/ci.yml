@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ddtcorex/dsh-maestro-ci/.github/workflows/node-plugin.yml@7acac89da2ba99457f8b4edfc683ce621ecacc21
+    with:
+      pnpm-version: ""
