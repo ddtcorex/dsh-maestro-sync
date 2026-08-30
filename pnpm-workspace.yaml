@@ -1,0 +1,5 @@
+packages:
+  - .
+  - ../dsh-maestro-config-lib
+allowBuilds:
+  esbuild: true

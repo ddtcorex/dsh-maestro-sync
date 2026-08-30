@@ -1,0 +1,8 @@
+node_modules/
+lib/
+.DS_Store
+
+
+# Re-include coordination files ignored by the global core.excludesFile
+!AGENTS.md
+!CLAUDE.md

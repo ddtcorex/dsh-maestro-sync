@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-maestro-sync
+      name: '@ddtcorex/dsh-maestro-sync'
+      channel: /dsh-maestro-sync
