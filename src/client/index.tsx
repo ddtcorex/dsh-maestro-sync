@@ -4,6 +4,7 @@
  * Calls host via connection.rpc.call('/dsh-maestro-sync', method, payload)
  */
 import * as React from 'react'
+import { SyncDashboard } from './dashboard.js'
 
 export const inject = ['slots', 'connection'] as const
 
@@ -19,11 +20,12 @@ const SYNC_CSS = `
 .sync-field { flex:1 1 160px; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-layer-2); padding:8px 10px; }
 .sync-field-label { font-size:11px; color:var(--dsw-alias-label-secondary); }
 .sync-field-value { font-size:13px; font-weight:600; word-break:break-all; }
-.sync-btn { min-height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); display:inline-flex; align-items:center; justify-content:center; gap:6px; font:inherit; font-size:13px; cursor:pointer; font-weight:500; }
+.sync-btn { min-height:44px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); display:inline-flex; align-items:center; justify-content:center; gap:6px; font:inherit; font-size:13px; cursor:pointer; font-weight:500; }
 .sync-btn:hover { border-color:var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-2); }
+.sync-btn:focus-visible { outline:2px solid var(--dsw-alias-border-l2); outline-offset:2px; }
 .sync-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.sync-btn-primary { background:#06c; color:#fff; border-color:#06c; }
-.sync-btn-primary:hover { background:#05a; border-color:#05a; color:#fff; }
+.sync-btn-primary { background:#2563EB; color:#fff; border-color:#2563EB; }
+.sync-btn-primary:hover { background:#1D4ED8; border-color:#1D4ED8; color:#fff; }
 .sync-pre { white-space:pre-wrap; word-break:break-word; font-size:12px; background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); border-radius:8px; padding:8px 10px; max-height:200px; overflow:auto; }
 .sync-muted { color:var(--dsw-alias-label-secondary); font-size:12px; }
 @media (prefers-reduced-motion: reduce) { .sync-btn { transition:none !important; } }
@@ -224,13 +226,44 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     result
       ? React.createElement('pre', { className: 'sync-pre', 'data-testid': 'sync-result' }, JSON.stringify(result, null, 2))
       : null,
+    React.createElement(
+      'button',
+      {
+        type: 'button',
+        onClick: () => {
+          try {
+            window.dispatchEvent(new CustomEvent('maestro-sync:open-dashboard'))
+          } catch {}
+        },
+        className: 'sync-btn',
+        style: { marginTop: 4 },
+        'data-testid': 'sync-open-dashboard-from-card',
+      },
+      'Open Sync Dashboard →',
+    ),
     React.createElement('div', { className: 'sync-muted' }, 'Dry-run previews without writing. Pull fetches remote → local, Push sends local → remote. Merge is union by stripId (§).'),
+  )
+}
+
+function SyncTrigger({ onOpen }: { onOpen: () => void }): React.ReactElement {
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      onClick: onOpen,
+      className: 'sync-btn',
+      style: { width: '100%', justifyContent: 'flex-start' },
+      'aria-label': 'Open Sync Dashboard',
+      'data-testid': 'sync-open-dashboard',
+    },
+    'Sync',
   )
 }
 
 export function apply(ctx: any): void {
   const slots = (ctx as any).slots ?? (ctx as any).get?.('slots')
   if (!slots?.inject || !slots?.register) return
+  // Settings card (summary) — stays in Settings page
   ctx.effect(
     () => {
       const dispose = slots.inject('settings.section', () =>
@@ -246,6 +279,47 @@ export function apply(ctx: any): void {
       }
     },
     'maestro-sync: settings',
+  )
+  // Dashboard tab — sidebar footer + overlay (full-page, Minimalism & Swiss)
+  ctx.effect(
+    () => {
+      let open = false
+      let setOpen: ((v: boolean) => void) | null = null
+      const TriggerWrap = () =>
+        React.createElement(SyncTrigger, {
+          onOpen: () => {
+            open = true
+            setOpen?.(true)
+          },
+        })
+      const OverlayWrap = () => {
+        const [isOpen, setIsOpen] = React.useState(open)
+        React.useEffect(() => {
+          setOpen = setIsOpen
+          const handler = () => setIsOpen(true)
+          try {
+            window.addEventListener('maestro-sync:open-dashboard', handler as any)
+          } catch {}
+          return () => {
+            setOpen = null
+            try {
+              window.removeEventListener('maestro-sync:open-dashboard', handler as any)
+            } catch {}
+          }
+        }, [setIsOpen])
+        if (!isOpen) return null
+        return React.createElement(SyncDashboard, { ctx, onClose: () => setIsOpen(false) })
+      }
+      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 40, label: () => 'Sync' }, () => React.createElement(TriggerWrap)))
+      const d2 = slots.inject('shell.overlay', () => slots.register({ name: 'shell.overlay', id: 'maestro-sync-dashboard', order: 40 }, () => React.createElement(OverlayWrap)))
+      return () => {
+        try {
+          ;(d1 as any)?.()
+          ;(d2 as any)?.()
+        } catch {}
+      }
+    },
+    'maestro-sync: dashboard',
   )
 }
 
