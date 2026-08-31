@@ -1,3 +1,4 @@
+// Task 2: transport now via ProcessRunner/Transport (argv-only)
 import * as nodeFs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
