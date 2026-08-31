@@ -55,6 +55,8 @@ const DASH_CSS = `
 .sync-dash-btn-primary { background:#2563EB; color:#fff; border-color:#2563EB; }
 .sync-dash-btn-primary:hover { background:#1D4ED8; border-color:#1D4ED8; color:#fff; }
 .sync-dash-result { margin:0 20px 16px; padding:12px 14px; border-radius:12px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); font-size:13px; line-height:18px; }
+.sync-dash-result-error { border-color:var(--dsw-alias-state-error-primary, #DC2626); background:var(--dsw-alias-bg-layer-2); }
+.sync-dash-result-error .sync-dash-result-title { color:var(--dsw-alias-state-error-primary, #DC2626); }
 .sync-dash-result-title { font-weight:600; margin-bottom:4px; }
 .sync-dash-result-desc { color:var(--dsw-alias-label-secondary); }
 .sync-dash-muted { color:var(--dsw-alias-label-secondary); font-size:12px; }
@@ -178,21 +180,21 @@ export function SyncDashboard({ ctx, onClose }: { ctx: any; onClose: () => void 
         { className: 'sync-dash-summary' },
         React.createElement(
           'div',
-          { className: 'sync-dash-card', style: hasLocal ? { borderColor: '#F59E0B', background: '#FFFBEB' } : undefined },
+          { className: 'sync-dash-card' },
           React.createElement('div', { className: 'sync-dash-card-label' }, 'Only on this machine'),
           React.createElement('div', { className: 'sync-dash-card-value' }, status ? String(status.localOnly) : '—'),
           React.createElement('div', { className: 'sync-dash-card-desc' }, hasLocal ? 'These will be sent to the other machine when you push.' : 'Nothing new here.'),
         ),
         React.createElement(
           'div',
-          { className: 'sync-dash-card', style: isSynced ? { borderColor: '#10B981', background: '#ECFDF5' } : undefined },
+          { className: 'sync-dash-card' },
           React.createElement('div', { className: 'sync-dash-card-label' }, 'Already in sync'),
           React.createElement('div', { className: 'sync-dash-card-value' }, status ? String(status.both) : '—'),
           React.createElement('div', { className: 'sync-dash-card-desc' }, isSynced ? 'All matched files are up to date.' : 'Files that match on both machines.'),
         ),
         React.createElement(
           'div',
-          { className: 'sync-dash-card', style: hasRemote ? { borderColor: '#3B82F6', background: '#EFF6FF' } : undefined },
+          { className: 'sync-dash-card' },
           React.createElement('div', { className: 'sync-dash-card-label' }, 'Only on the other machine'),
           React.createElement('div', { className: 'sync-dash-card-value' }, status ? String(status.remoteOnly) : '—'),
           React.createElement('div', { className: 'sync-dash-card-desc' }, hasRemote ? 'These will be brought here when you pull.' : 'Nothing new there.'),
@@ -255,11 +257,11 @@ export function SyncDashboard({ ctx, onClose }: { ctx: any; onClose: () => void 
           ? React.createElement('div', { className: 'sync-dash-file', style: { justifyContent: 'center', color: 'var(--dsw-alias-label-secondary)' } as any }, `And ${status.localOnlyFiles.length - 8} more files`)
           : null,
       ) : null,
-      error ? React.createElement('div', { className: 'sync-dash-result', style: { borderColor: '#FCA5A5', background: '#FEF2F2' } as any },
-        React.createElement('div', { className: 'sync-dash-result-title', style: { color: '#DC2626' } as any }, 'Something went wrong'),
+      error ? React.createElement('div', { className: 'sync-dash-result sync-dash-result-error' },
+        React.createElement('div', { className: 'sync-dash-result-title' }, 'Something went wrong'),
         React.createElement('div', { className: 'sync-dash-result-desc' }, error),
       ) : null,
-      result ? React.createElement('div', { className: 'sync-dash-result', style: result.copied === 0 && result.added === 0 ? { background: '#ECFDF5', borderColor: '#6EE7B7' } : undefined } as any,
+      result ? React.createElement('div', { className: 'sync-dash-result' },
         React.createElement('div', { className: 'sync-dash-result-title' },
           result.kind === 'dry' ? 'Preview — nothing was changed yet' : result.kind === 'pull' ? 'Pull complete' : 'Push complete',
         ),
