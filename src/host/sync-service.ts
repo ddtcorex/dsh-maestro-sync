@@ -68,7 +68,7 @@ export class SyncService {
 
   constructor(opts: SyncServiceOpts = {}) {
     this.localDsh = opts.localDsh || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-    this.remote = opts.remote || 'dsh-remote';
+    this.remote = opts.remote || process.env.REMOTE_HOST || process.env.REMOTE || 'kai@ssh.ddtcorex.com';
     this.remoteDsh = opts.remoteDsh || '~/.dsh';
     this.exec = opts.exec || defaultExec;
     this.fs = opts.fs || nodeFs;

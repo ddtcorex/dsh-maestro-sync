@@ -19,7 +19,7 @@ export async function loadSyncConfig(): Promise<SyncConfig> {
     (sync.remoteHost as string | undefined) ||
     process.env.REMOTE_HOST ||
     process.env.REMOTE ||
-    'dsh-remote';
+    'kai@ssh.ddtcorex.com';
   const remoteDshPath = (sync.remoteDshPath as string | undefined) || '~/.dsh';
   const strategy = (sync.strategy as string | undefined) || 'merge';
   return { remoteHost, remoteDshPath, strategy };
