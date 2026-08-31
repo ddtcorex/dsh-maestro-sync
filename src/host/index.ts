@@ -2,6 +2,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { defineTool } from '@deepseek-ai/dsh-tools';
 import { SyncService } from './sync-service.js';
 import { loadSyncConfig } from './config.js';
 
@@ -87,56 +88,77 @@ export default {
   apply(ctx: any) {
     // maestro_sync_pull
     ctx.effect(() =>
-      ctx.tools.register('maestro_sync_pull', {
+      ctx.tools.register(defineTool({
+        name: 'maestro_sync_pull',
         description: 'Pull merge DSH state remote->local',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            dryRun: { type: 'boolean', description: 'preview without writing' },
-          },
+        parameters: {
+          dryRun: { type: 'boolean', description: 'preview without writing' },
         },
-        handler: async ({ dryRun }: { dryRun?: boolean }) => {
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { text: { type: 'string', required: true } },
+          },
+          render: (_args, value) => [{ type: 'text', text: value.text }],
+        },
+        async execute({ dryRun }) {
           const cfg = await loadSyncConfig();
           const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
           const result = await svc.pull({ dryRun: !!dryRun });
           if (!dryRun) await restoreTunnelProfile();
-          return { ok: true, ...result };
+          return { text: JSON.stringify({ ok: true, ...result }) };
         },
-      }),
+      })),
     );
 
     // maestro_sync_push
     ctx.effect(() =>
-      ctx.tools.register('maestro_sync_push', {
+      ctx.tools.register(defineTool({
+        name: 'maestro_sync_push',
         description: 'Push merge DSH state local->remote',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            dryRun: { type: 'boolean', description: 'preview without writing' },
-          },
+        parameters: {
+          dryRun: { type: 'boolean', description: 'preview without writing' },
         },
-        handler: async ({ dryRun }: { dryRun?: boolean }) => {
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { text: { type: 'string', required: true } },
+          },
+          render: (_args, value) => [{ type: 'text', text: value.text }],
+        },
+        async execute({ dryRun }) {
           const cfg = await loadSyncConfig();
           const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
           const result = await svc.push({ dryRun: !!dryRun });
           if (!dryRun) await restoreTunnelProfile();
-          return { ok: true, ...result };
+          return { text: JSON.stringify({ ok: true, ...result }) };
         },
-      }),
+      })),
     );
 
     // maestro_sync_status
     ctx.effect(() =>
-      ctx.tools.register('maestro_sync_status', {
+      ctx.tools.register(defineTool({
+        name: 'maestro_sync_status',
         description: 'Sync status: counts of local/remote/both files',
-        inputSchema: { type: 'object', properties: {} },
-        handler: async () => {
+        parameters: {},
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { text: { type: 'string', required: true } },
+          },
+          render: (_args, value) => [{ type: 'text', text: value.text }],
+        },
+        async execute() {
           const cfg = await loadSyncConfig();
           const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
           const st = await svc.status();
-          return { ok: true, ...st };
+          return { text: JSON.stringify({ ok: true, ...st }) };
         },
-      }),
+      })),
     );
 
     // Loopback RPC for Settings UI

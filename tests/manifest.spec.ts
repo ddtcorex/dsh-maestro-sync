@@ -7,6 +7,13 @@ describe('manifest', () => {
     expect(j.main).toBe('./lib/index.js');
     expect(j.files).toContain('lib');
   });
+  it('exports the DSH client bundle', () => {
+    const j = JSON.parse(readFileSync('package.json', 'utf-8'));
+    expect(j.exports['./client']).toEqual({
+      types: './lib/types/client/index.d.ts',
+      default: './lib/client.js',
+    });
+  });
   it('pnpm-workspace allows esbuild', () => {
     const y = readFileSync('pnpm-workspace.yaml', 'utf-8');
     expect(y).toMatch(/allowBuilds/);

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SyncService } from '../src/host/sync-service.js';
 
 describe('host', () => {
-  it('registers 3 tools and loopback RPC channel', async () => {
+  it('registers three complete tool definitions and the loopback RPC channel', async () => {
     const register = vi.fn(() => () => {});
     const handle = vi.fn(() => () => {});
     const effect = vi.fn((fn: any) => {
@@ -26,10 +26,24 @@ describe('host', () => {
     expect(plugin.inject).toEqual(expect.arrayContaining(['tools', 'connection']));
     await plugin.apply(ctx);
 
-    // Expect 3 tools: pull/push/status
+    // The registry accepts one complete definition per tool. These assertions
+    // catch the obsolete register(name, definition) form that leaves output
+    // undefined during host boot.
     expect(register).toHaveBeenCalledTimes(3);
-    const names = register.mock.calls.map((c: any[]) => String(c[0]));
+    expect(register.mock.calls.every((call: any[]) => call.length === 1)).toBe(true);
+    const definitions = register.mock.calls.map((call: any[]) => call[0]);
+    const names = definitions.map((definition: any) => definition.name);
     expect(names).toEqual(expect.arrayContaining(['maestro_sync_pull', 'maestro_sync_push', 'maestro_sync_status']));
+    for (const definition of definitions) {
+      expect(definition.parameters).toMatchObject({ type: 'object' });
+      expect(definition.output).toMatchObject({
+        schema: { type: 'object' },
+        render: expect.any(Function),
+      });
+      expect(definition.output.render({}, { text: '{"ok":true}' })).toEqual([
+        { type: 'text', text: '{"ok":true}' },
+      ]);
+    }
 
     // RPC loopback
     expect(handle).toHaveBeenCalledTimes(1);
