@@ -1,33 +1,53 @@
 /**
- * dsh-maestro-sync — client Settings tab
- * React card in Settings slot, shows remoteHost, lastSync, Dry-run / Pull merge / Push merge
- * Calls host via connection.rpc.call('/dsh-maestro-sync', method, payload)
+ * dsh-maestro-sync — Settings section only (sidebar + dashboard removed)
+ * Shows human-readable sync status inside Settings. No sidebar button, no overlay.
  */
 import * as React from 'react'
-import { SyncDashboard } from './dashboard.js'
 
 export const inject = ['slots', 'connection'] as const
 
 const RPC_CHANNEL = '/dsh-maestro-sync'
 
 const SYNC_CSS = `
-.sync-card { border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-layer-1); padding:16px; display:flex; flex-direction:column; gap:12px; }
+.sync-card { border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-layer-1); padding:16px; display:flex; flex-direction:column; gap:14px; }
 .sync-header { display:flex; align-items:center; gap:10px; }
 .sync-title { font-size:14px; font-weight:700; letter-spacing:-0.01em; }
-.sync-subtitle { color:var(--dsw-alias-label-secondary); font-size:12px; }
-.sync-kicker { text-transform:uppercase; letter-spacing:0.04em; font-size:11px; color:var(--dsw-alias-label-secondary); font-weight:600; }
-.sync-row { display:flex; gap:12px; flex-wrap:wrap; }
+.sync-subtitle { color:var(--dsw-alias-label-secondary); font-size:12px; line-height:16px; margin-top:2px; }
+.sync-fields { display:flex; gap:10px; flex-wrap:wrap; }
 .sync-field { flex:1 1 160px; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-layer-2); padding:8px 10px; }
-.sync-field-label { font-size:11px; color:var(--dsw-alias-label-secondary); }
-.sync-field-value { font-size:13px; font-weight:600; word-break:break-all; }
-.sync-btn { min-height:44px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); display:inline-flex; align-items:center; justify-content:center; gap:6px; font:inherit; font-size:13px; cursor:pointer; font-weight:500; }
+.sync-field-label { font-size:11px; color:var(--dsw-alias-label-secondary); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
+.sync-field-value { font-size:13px; font-weight:600; word-break:break-all; margin-top:2px; }
+.sync-stats { display:grid; grid-template-columns:1fr; gap:10px; }
+@media(min-width:640px){ .sync-stats{ grid-template-columns:1fr 1fr 1fr; } }
+.sync-stat { border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-2); padding:12px; display:flex; flex-direction:column; gap:6px; }
+.sync-stat-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; color:var(--dsw-alias-label-secondary); }
+.sync-stat-value { font-size:22px; font-weight:700; line-height:1; letter-spacing:-0.02em; }
+.sync-stat-desc { font-size:11px; line-height:14px; color:var(--dsw-alias-label-secondary); }
+.sync-section { border:1px solid var(--dsw-alias-border-l1); border-radius:10px; background:var(--dsw-alias-bg-layer-1); overflow:hidden; }
+.sync-section-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; border-bottom:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); }
+.sync-section-title { font-size:12px; font-weight:600; display:flex; align-items:center; gap:6px; }
+.sync-section-count { font-size:11px; font-weight:600; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-border-l1); border-radius:999px; padding:2px 8px; }
+.sync-file { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--dsw-alias-border-l1); font-size:12px; }
+.sync-file:last-child{ border-bottom:none; }
+.sync-file-icon { flex:none; width:26px; height:26px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:13px; background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); color:var(--dsw-alias-label-secondary); }
+.sync-file-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
+.sync-file-title { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.sync-file-path { font-size:11px; color:var(--dsw-alias-label-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sync-file-meta { flex:none; font-size:11px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); border-radius:6px; padding:1px 6px; }
+.sync-empty { padding:16px 12px; text-align:center; color:var(--dsw-alias-label-secondary); font-size:12px; line-height:16px; }
+.sync-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.sync-btn { min-height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); color:var(--dsw-alias-label-primary); display:inline-flex; align-items:center; justify-content:center; gap:6px; font:inherit; font-size:13px; cursor:pointer; font-weight:500; }
 .sync-btn:hover { border-color:var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-2); }
 .sync-btn:focus-visible { outline:2px solid var(--dsw-alias-border-l2); outline-offset:2px; }
 .sync-btn:disabled { opacity:0.5; cursor:not-allowed; }
 .sync-btn-primary { background:#2563EB; color:#fff; border-color:#2563EB; }
 .sync-btn-primary:hover { background:#1D4ED8; border-color:#1D4ED8; color:#fff; }
-.sync-pre { white-space:pre-wrap; word-break:break-word; font-size:12px; background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); border-radius:8px; padding:8px 10px; max-height:200px; overflow:auto; }
-.sync-muted { color:var(--dsw-alias-label-secondary); font-size:12px; }
+.sync-result { padding:10px 12px; border-radius:10px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); font-size:12px; line-height:16px; }
+.sync-result-error { border-color:var(--dsw-alias-state-error-primary, #DC2626); }
+.sync-result-error .sync-result-title { color:var(--dsw-alias-state-error-primary, #DC2626); }
+.sync-result-title { font-weight:600; margin-bottom:2px; font-size:12px; }
+.sync-result-desc { color:var(--dsw-alias-label-secondary); }
+.sync-muted { color:var(--dsw-alias-label-secondary); font-size:11px; line-height:14px; }
 @media (prefers-reduced-motion: reduce) { .sync-btn { transition:none !important; } }
 `
 
@@ -42,365 +62,222 @@ function formatLastSync(v: string | null): string {
   }
 }
 
+function formatFile(path: string): { icon: string; title: string; path: string; meta: string } {
+  if (path.startsWith('memories/daily/')) {
+    const date = path.replace('memories/daily/', '').replace('.md', '')
+    try {
+      const d = new Date(date)
+      if (!isNaN(d.getTime())) return { icon: '📝', title: `Daily notes — ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`, path, meta: 'Daily' }
+    } catch {}
+    return { icon: '📝', title: `Daily notes — ${date}`, path, meta: 'Daily' }
+  }
+  if (path.startsWith('memories/projects/')) {
+    const hash = path.split('/')[2] ?? ''
+    return { icon: '📁', title: 'Project memory', path, meta: hash.slice(0, 7) }
+  }
+  if (path === 'memories/MEMORY.md') return { icon: '⭐', title: 'Global memory', path, meta: 'Global' }
+  if (path.startsWith('sessions/')) {
+    const hash = path.split('/')[1] ?? ''
+    return { icon: '💬', title: 'Session', path, meta: hash.slice(0, 7) }
+  }
+  if (path.startsWith('maestro/')) return { icon: '⚙️', title: path.split('/').pop() ?? path, path, meta: 'Maestro' }
+  if (path === 'settings.yaml') return { icon: '🔧', title: 'Settings', path, meta: 'Config' }
+  return { icon: '📄', title: path.split('/').pop() ?? path, path, meta: path.split('/')[0] ?? '' }
+}
+
+function humanSummary(status: any): string {
+  if (!status) return 'Checking what needs to be synced…'
+  const { localOnly = 0, remoteOnly = 0, both = 0 } = status
+  if (localOnly === 0 && remoteOnly === 0) return `Everything is in sync — ${both} files match on both machines.`
+  if (localOnly > 0 && remoteOnly === 0) return `${localOnly} files only here will be sent when you push.`
+  if (remoteOnly > 0 && localOnly === 0) return `${remoteOnly} files only on the other machine will be pulled.`
+  return `${localOnly} only here · ${remoteOnly} only there · ${both} already match`
+}
+
 function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
   const [remoteHost, setRemoteHost] = React.useState<string>('…')
   const [lastSync, setLastSync] = React.useState<string | null>(() => {
-    try {
-      return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null
-    } catch {
-      return null
-    }
+    try { return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null } catch { return null }
   })
   const [status, setStatus] = React.useState<any>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
-  const [result, setResult] = React.useState<any>(null)
+  const [result, setResult] = React.useState<{ kind: 'dry' | 'pull' | 'push'; copied: number; merged: number; added: number } | null>(null)
   const [error, setError] = React.useState<string>('')
 
-  const call = React.useCallback(
-    (method: string, payload: any): Promise<any> => {
-      const conn = (ctx as any).connection ?? (ctx as any).get?.('connection')
-      if (!conn?.rpc?.call) return Promise.reject(new Error('RPC not available'))
-      return conn.rpc.call(RPC_CHANNEL, method, payload) as Promise<any>
-    },
-    [ctx],
-  )
+  const call = React.useCallback((method: string, payload: any): Promise<any> => {
+    const conn = (ctx as any).connection ?? (ctx as any).get?.('connection')
+    if (!conn?.rpc?.call) return Promise.reject(new Error('RPC not available'))
+    return conn.rpc.call(RPC_CHANNEL, method, payload) as Promise<any>
+  }, [ctx])
 
   const loadStatus = React.useCallback(async () => {
     setError('')
     try {
       const res: any = await call('status', {})
-      // host returns {ok:true, ...statusFields} or {ok:false, error}
       const data = res?.ok === true ? res : res?.ok === false ? res : { ok: true, ...res }
-      if (data?.ok === false) {
-        setError(data?.error ?? 'status failed')
-        return
-      }
+      if (data?.ok === false) { setError(data?.error ?? 'status failed'); return }
       setStatus(data)
-      // derive remoteHost if present; otherwise keep default
       const rh = (data as any).remoteHost ?? (data as any).remote ?? (data as any).remoteHostName
       if (typeof rh === 'string' && rh) setRemoteHost(rh)
       else if (remoteHost === '…') setRemoteHost('dsh-remote')
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    }
+    } catch (e: any) { setError(e?.message ?? String(e)) }
   }, [call, remoteHost])
 
-  React.useEffect(() => {
-    void loadStatus()
-  }, [loadStatus])
+  React.useEffect(() => { void loadStatus() }, [loadStatus])
 
   const persistLastSync = React.useCallback((ts: string) => {
     setLastSync(ts)
-    try {
-      if (typeof localStorage !== 'undefined') localStorage.setItem('dsh-maestro-sync:lastSync', ts)
-    } catch {}
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem('dsh-maestro-sync:lastSync', ts) } catch {}
   }, [])
 
   const handleDryRun = React.useCallback(async () => {
-    setBusy('dry')
-    setError('')
-    setResult(null)
+    setBusy('dry'); setError(''); setResult(null)
     try {
       const res: any = await call('pull', { dryRun: true })
-      setResult(res)
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    } finally {
-      setBusy(null)
-    }
+      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
+      if (data?.ok === false) { setError(data?.error ?? 'Preview failed'); return }
+      setResult({ kind: 'dry', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
+    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }, [call])
 
   const handlePull = React.useCallback(async () => {
-    setBusy('pull')
-    setError('')
-    setResult(null)
+    setBusy('pull'); setError(''); setResult(null)
     try {
       const res: any = await call('pull', { dryRun: false })
-      setResult(res)
-      if (res?.ok !== false) persistLastSync(new Date().toISOString())
+      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
+      if (data?.ok === false) { setError(data?.error ?? 'Pull failed'); return }
+      setResult({ kind: 'pull', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
+      if (data?.ok !== false) persistLastSync(new Date().toISOString())
       await loadStatus()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    } finally {
-      setBusy(null)
-    }
+    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }, [call, loadStatus, persistLastSync])
 
   const handlePush = React.useCallback(async () => {
-    setBusy('push')
-    setError('')
-    setResult(null)
+    setBusy('push'); setError(''); setResult(null)
     try {
       const res: any = await call('push', { dryRun: false })
-      setResult(res)
-      if (res?.ok !== false) persistLastSync(new Date().toISOString())
+      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
+      if (data?.ok === false) { setError(data?.error ?? 'Push failed'); return }
+      setResult({ kind: 'push', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
+      if (data?.ok !== false) persistLastSync(new Date().toISOString())
       await loadStatus()
-    } catch (e: any) {
-      setError(e?.message ?? String(e))
-    } finally {
-      setBusy(null)
-    }
+    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }, [call, loadStatus, persistLastSync])
 
-  const counts = status
-    ? `${status.localOnly ?? 0} local-only · ${status.remoteOnly ?? 0} remote-only · ${status.both ?? 0} both`
-    : '—'
+  const summary = humanSummary(status)
 
-  return React.createElement(
-    'div',
-    { className: 'sync-card' },
+  return React.createElement('div', { className: 'sync-card' },
     React.createElement('style', null, SYNC_CSS),
-    React.createElement(
-      'div',
-      { className: 'sync-header' },
-      React.createElement(
-        'div',
-        { style: { flex: '1 1 auto', minWidth: 0 } },
+    React.createElement('div', { className: 'sync-header' },
+      React.createElement('div', { style: { flex: '1 1 auto', minWidth: 0 } },
         React.createElement('div', { className: 'sync-title' }, 'Maestro Sync'),
-        React.createElement('div', { className: 'sync-subtitle' }, 'Merge memories & sessions between dsh-home ↔ dsh-company (no --delete)'),
+        React.createElement('div', { className: 'sync-subtitle' }, summary),
       ),
-      React.createElement(
-        'button',
-        { type: 'button', onClick: loadStatus, className: 'sync-btn', 'aria-label': 'Refresh status', disabled: !!busy },
-        'Refresh',
-      ),
+      React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy, 'aria-label': 'Refresh status' }, 'Refresh'),
     ),
-    React.createElement(
-      'div',
-      { className: 'sync-row' },
-      React.createElement(
-        'div',
-        { className: 'sync-field' },
+    React.createElement('div', { className: 'sync-fields' },
+      React.createElement('div', { className: 'sync-field' },
         React.createElement('div', { className: 'sync-field-label' }, 'Remote host'),
         React.createElement('div', { className: 'sync-field-value', 'data-testid': 'sync-remote-host' }, remoteHost),
       ),
-      React.createElement(
-        'div',
-        { className: 'sync-field' },
+      React.createElement('div', { className: 'sync-field' },
         React.createElement('div', { className: 'sync-field-label' }, 'Last sync'),
         React.createElement('div', { className: 'sync-field-value', 'data-testid': 'sync-last-sync' }, formatLastSync(lastSync)),
       ),
     ),
-    React.createElement('div', { className: 'sync-muted', 'data-testid': 'sync-counts' }, counts),
-    status?.bothFiles?.length
-      ? React.createElement('div', { className: 'sync-muted' }, `both: ${(status.bothFiles as string[]).slice(0, 5).join(', ')}${(status.bothFiles as string[]).length > 5 ? ' …' : ''}`)
-      : null,
-    React.createElement(
-      'div',
-      { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
-      React.createElement(
-        'button',
-        {
-          type: 'button',
-          onClick: handleDryRun,
-          className: 'sync-btn',
-          disabled: !!busy,
-          'data-testid': 'sync-dry-run',
-        },
-        busy === 'dry' ? 'Running…' : 'Dry-run',
+    // 3-stat summary — neutral DSH tokens only
+    React.createElement('div', { className: 'sync-stats' },
+      React.createElement('div', { className: 'sync-stat' },
+        React.createElement('div', { className: 'sync-stat-label' }, 'Only on this machine'),
+        React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.localOnly ?? 0) : '—'),
+        React.createElement('div', { className: 'sync-stat-desc' }, status?.localOnly ? 'Will be sent when you push.' : 'Nothing new here.'),
       ),
-      React.createElement(
-        'button',
-        {
-          type: 'button',
-          onClick: handlePull,
-          className: 'sync-btn sync-btn-primary',
-          disabled: !!busy,
-          'data-testid': 'sync-pull',
-        },
-        busy === 'pull' ? 'Pulling…' : 'Pull merge',
+      React.createElement('div', { className: 'sync-stat' },
+        React.createElement('div', { className: 'sync-stat-label' }, 'Already in sync'),
+        React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.both ?? 0) : '—'),
+        React.createElement('div', { className: 'sync-stat-desc' }, 'Files matching on both machines.'),
       ),
-      React.createElement(
-        'button',
-        {
-          type: 'button',
-          onClick: handlePush,
-          className: 'sync-btn',
-          disabled: !!busy,
-          'data-testid': 'sync-push',
-        },
-        busy === 'push' ? 'Pushing…' : 'Push merge',
+      React.createElement('div', { className: 'sync-stat' },
+        React.createElement('div', { className: 'sync-stat-label' }, 'Only on the other machine'),
+        React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.remoteOnly ?? 0) : '—'),
+        React.createElement('div', { className: 'sync-stat-desc' }, status?.remoteOnly ? 'Will be brought when you pull.' : 'Nothing new there.'),
       ),
     ),
-    error ? React.createElement('div', { style: { color: 'var(--dsw-alias-state-error-primary)', fontSize: 12 } }, error) : null,
-    result
-      ? React.createElement('pre', { className: 'sync-pre', 'data-testid': 'sync-result' }, JSON.stringify(result, null, 2))
-      : null,
-    React.createElement(
-      'button',
-      {
-        type: 'button',
-        onClick: () => {
-          try {
-            window.dispatchEvent(new CustomEvent('maestro-sync:open-dashboard'))
-          } catch {}
-        },
-        className: 'sync-btn',
-        style: { marginTop: 4 },
-        'data-testid': 'sync-open-dashboard-from-card',
-      },
-      'Open Sync Dashboard →',
+    React.createElement('div', { className: 'sync-actions' },
+      React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-btn', disabled: !!busy, 'data-testid': 'sync-dry-run' }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
+      React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-btn sync-btn-primary', disabled: !!busy, 'data-testid': 'sync-pull' }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
+      React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-btn', disabled: !!busy, 'data-testid': 'sync-push' }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
+      React.createElement('span', { className: 'sync-muted', style: { marginLeft: 'auto' } as any }, status?.remoteHost ? `Connected to ${status.remoteHost}` : 'Not connected'),
     ),
-    React.createElement('div', { className: 'sync-muted' }, 'Dry-run previews without writing. Pull fetches remote → local, Push sends local → remote. Merge is union by stripId (§).'),
-  )
-}
-
-function SyncIcon({ size = 16 }: { size?: number }): React.ReactElement {
-  return React.createElement(
-    'svg',
-    {
-      width: size,
-      height: size,
-      viewBox: '0 0 16 16',
-      fill: 'none',
-      xmlns: 'http://www.w3.org/2000/svg',
-      'aria-hidden': true,
-      style: { flex: 'none', display: 'block' },
-    },
-    React.createElement('path', {
-      d: 'M2.8 8 A5.2 5.2 0 0 1 13.2 8 A5.2 5.2 0 0 1 2.8 8',
-      stroke: 'currentColor',
-      strokeWidth: 1.6,
-      strokeLinecap: 'round',
-      strokeLinejoin: 'round',
-    }),
-    React.createElement('path', {
-      d: 'M13.2 3.2 L13.2 5.8 L10.6 5.8',
-      stroke: 'currentColor',
-      strokeWidth: 1.6,
-      strokeLinecap: 'round',
-      strokeLinejoin: 'round',
-      fill: 'none',
-    }),
-    React.createElement('path', {
-      d: 'M2.8 12.8 L2.8 10.2 L5.4 10.2',
-      stroke: 'currentColor',
-      strokeWidth: 1.6,
-      strokeLinecap: 'round',
-      strokeLinejoin: 'round',
-      fill: 'none',
-    }),
-  )
-}
-
-function SyncTrigger({ wide = true, onOpen }: { wide?: boolean; onOpen: () => void }): React.ReactElement {
-  const isWide = wide !== false
-  return React.createElement(
-    'button',
-    {
-      type: 'button',
-      'data-maestro-sync-trigger': '',
-      onClick: onOpen,
-      style: isWide
-        ? ({
-            flex: 'none',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            width: 'calc(100% + 4px)',
-            height: '42px',
-            margin: '4px -2px',
-            padding: '0 10px 0 8px',
-            boxSizing: 'border-box',
-            border: 'none',
-            borderRadius: '12px',
-            background: 'transparent',
-            cursor: 'pointer',
-            overflow: 'hidden',
-            color: 'var(--dsw-alias-label-primary)',
-            fontFamily: 'inherit',
-            fontSize: '14px',
-            lineHeight: '22px',
-            justifyContent: 'flex-start',
-            textAlign: 'left',
-          } as any)
-        : ({
-            flex: 'none',
-            display: 'inline-flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '36px',
-            height: '36px',
-            margin: '8px 0 10px',
-            padding: 0,
-            border: 'none',
-            borderRadius: '50%',
-            background: 'transparent',
-            cursor: 'pointer',
-            color: 'var(--dsw-alias-label-primary)',
-          } as any),
-      onMouseEnter: (e: any) => (e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)'),
-      onMouseLeave: (e: any) => (e.currentTarget.style.background = 'transparent'),
-      'aria-label': 'Open Sync Dashboard',
-      'data-testid': 'sync-open-dashboard',
-    },
-    React.createElement(SyncIcon, { size: isWide ? 16 : 18 }),
-    isWide ? React.createElement('span', { style: { flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' } as any }, 'Maestro Sync') : null,
+    // File lists — compact human-readable
+    status ? React.createElement('div', { className: 'sync-section' },
+      React.createElement('div', { className: 'sync-section-head' },
+        React.createElement('div', { className: 'sync-section-title' }, '📥 Coming from the other machine'),
+        React.createElement('div', { className: 'sync-section-count' }, `${status.remoteOnlyFiles?.length ?? 0} files`),
+      ),
+      (status.remoteOnlyFiles?.length ?? 0) === 0
+        ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no new files.')
+        : (status.remoteOnlyFiles ?? []).slice(0, 5).map((p: string) => {
+            const f = formatFile(p)
+            return React.createElement('div', { key: p, className: 'sync-file' },
+              React.createElement('div', { className: 'sync-file-icon' }, f.icon),
+              React.createElement('div', { className: 'sync-file-main' },
+                React.createElement('div', { className: 'sync-file-title' }, f.title),
+                React.createElement('div', { className: 'sync-file-path' }, f.path),
+              ),
+              React.createElement('div', { className: 'sync-file-meta' }, f.meta),
+            )
+          }),
+      (status.remoteOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 5} more`) : null,
+    ) : null,
+    status ? React.createElement('div', { className: 'sync-section' },
+      React.createElement('div', { className: 'sync-section-head' },
+        React.createElement('div', { className: 'sync-section-title' }, '📤 Ready to send'),
+        React.createElement('div', { className: 'sync-section-count' }, `${status.localOnlyFiles?.length ?? 0} files`),
+      ),
+      (status.localOnlyFiles?.length ?? 0) === 0
+        ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to push — this machine has no new files.')
+        : (status.localOnlyFiles ?? []).slice(0, 5).map((p: string) => {
+            const f = formatFile(p)
+            return React.createElement('div', { key: p, className: 'sync-file' },
+              React.createElement('div', { className: 'sync-file-icon' }, f.icon),
+              React.createElement('div', { className: 'sync-file-main' },
+                React.createElement('div', { className: 'sync-file-title' }, f.title),
+                React.createElement('div', { className: 'sync-file-path' }, f.path),
+              ),
+              React.createElement('div', { className: 'sync-file-meta' }, f.meta),
+            )
+          }),
+      (status.localOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.localOnlyFiles.length - 5} more`) : null,
+    ) : null,
+    error ? React.createElement('div', { className: 'sync-result sync-result-error' },
+      React.createElement('div', { className: 'sync-result-title' }, 'Something went wrong'),
+      React.createElement('div', { className: 'sync-result-desc' }, error),
+    ) : null,
+    result ? React.createElement('div', { className: 'sync-result' },
+      React.createElement('div', { className: 'sync-result-title' },
+        result.kind === 'dry' ? 'Preview — nothing was changed yet' : result.kind === 'pull' ? 'Pull complete' : 'Push complete',
+      ),
+      React.createElement('div', { className: 'sync-result-desc' },
+        result.kind === 'dry' ? `${result.copied} files would be copied and ${result.added} new notes would be merged. Run Pull to actually bring them here.`
+          : result.kind === 'pull' ? `Brought ${result.copied} files and merged ${result.added} new notes.`
+          : `Sent ${result.copied} files to the other machine.`,
+        result.merged > 0 ? ` ${result.merged} memories had new notes combined.` : '',
+      ),
+    ) : null,
+    React.createElement('div', { className: 'sync-muted', style: { textAlign: 'center' } as any }, 'Notes and sessions are merged — never overwritten. Daily notes by unique entries, sessions by new lines.'),
   )
 }
 
 export function apply(ctx: any): void {
   const slots = (ctx as any).slots ?? (ctx as any).get?.('slots')
   if (!slots?.inject || !slots?.register) return
-  // Settings card (summary) — stays in Settings page
-  ctx.effect(
-    () => {
-      const dispose = slots.inject('settings.section', () =>
-        slots.register(
-          { name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' },
-          () => React.createElement(SyncPanel, { ctx }),
-        ),
-      )
-      return () => {
-        try {
-          ;(dispose as any)?.()
-        } catch {}
-      }
-    },
-    'maestro-sync: settings',
-  )
-  // Dashboard tab — sidebar footer + overlay (full-page, Minimalism & Swiss)
-  ctx.effect(
-    () => {
-      let open = false
-      let setOpen: ((v: boolean) => void) | null = null
-      const TriggerWrap = (props: any) =>
-        React.createElement(SyncTrigger, {
-          wide: props?.wide ?? true,
-          onOpen: () => {
-            open = true
-            setOpen?.(true)
-          },
-        })
-      const OverlayWrap = () => {
-        const [isOpen, setIsOpen] = React.useState(open)
-        React.useEffect(() => {
-          setOpen = setIsOpen
-          const handler = () => setIsOpen(true)
-          try {
-            window.addEventListener('maestro-sync:open-dashboard', handler as any)
-          } catch {}
-          return () => {
-            setOpen = null
-            try {
-              window.removeEventListener('maestro-sync:open-dashboard', handler as any)
-            } catch {}
-          }
-        }, [setIsOpen])
-        if (!isOpen) return null
-        return React.createElement(SyncDashboard, { ctx, onClose: () => setIsOpen(false) })
-      }
-      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 10, label: () => 'Maestro Sync' }, () => React.createElement(TriggerWrap)))
-      const d2 = slots.inject('shell.overlay', () => slots.register({ name: 'shell.overlay', id: 'maestro-sync-dashboard', order: 40 }, () => React.createElement(OverlayWrap)))
-      return () => {
-        try {
-          ;(d1 as any)?.()
-          ;(d2 as any)?.()
-        } catch {}
-      }
-    },
-    'maestro-sync: dashboard',
-  )
+  ctx.effect(() => {
+    const dispose = slots.inject('settings.section', () =>
+      slots.register({ name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' }, () => React.createElement(SyncPanel, { ctx })),
+    )
+    return () => { try { (dispose as any)?.() } catch {} }
+  }, 'maestro-sync: settings')
 }
 
 export default { inject, apply }
