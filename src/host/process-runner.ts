@@ -1,7 +1,4 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 
 export interface ProcessResult {
   stdout: Buffer;
@@ -13,24 +10,53 @@ export interface ProcessRunner {
   run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number }): Promise<ProcessResult>;
 }
 
+/** Maximum combined output before we kill the child (fail-closed, avoids OOM). */
+const MAX_BUFFER_BYTES = 20 * 1024 * 1024;
+
 export class NodeProcessRunner implements ProcessRunner {
   async run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number }): Promise<ProcessResult> {
     return new Promise<ProcessResult>((resolve, reject) => {
+      // argv-only, never shell — caller may pass filenames with spaces/metachars as single argv items
       const child = spawn(file, args as string[], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
+      let stdoutLen = 0;
+      let stderrLen = 0;
       let timeout: NodeJS.Timeout | undefined;
       let timedOut = false;
+      let killedForBounds = false;
+
+      const killForBounds = () => {
+        if (killedForBounds) return;
+        killedForBounds = true;
+        try { child.kill('SIGKILL'); } catch {}
+      };
 
       if (options?.timeoutMs) {
         timeout = setTimeout(() => {
           timedOut = true;
-          child.kill('SIGKILL');
+          try { child.kill('SIGKILL'); } catch {}
         }, options.timeoutMs);
       }
 
-      child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(Buffer.from(chunk)));
-      child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(Buffer.from(chunk)));
+      child.stdout?.on('data', (chunk: Buffer) => {
+        const buf = Buffer.from(chunk);
+        stdoutLen += buf.length;
+        if (stdoutLen > MAX_BUFFER_BYTES) {
+          killForBounds();
+          return;
+        }
+        stdoutChunks.push(buf);
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        const buf = Buffer.from(chunk);
+        stderrLen += buf.length;
+        if (stdoutLen + stderrLen > MAX_BUFFER_BYTES) {
+          killForBounds();
+          return;
+        }
+        stderrChunks.push(buf);
+      });
 
       child.on('error', (err) => {
         if (timeout) clearTimeout(timeout);
@@ -43,6 +69,10 @@ export class NodeProcessRunner implements ProcessRunner {
           reject(new Error(`process "${file} ${args.join(' ')}" timed out after ${options?.timeoutMs}ms`));
           return;
         }
+        if (killedForBounds) {
+          reject(new Error(`process "${file}" output exceeded ${MAX_BUFFER_BYTES} bytes`));
+          return;
+        }
         resolve({
           stdout: Buffer.concat(stdoutChunks),
           stderr: Buffer.concat(stderrChunks),
@@ -51,7 +81,7 @@ export class NodeProcessRunner implements ProcessRunner {
       });
 
       if (options?.input) {
-        child.stdin?.write(options.input);
+        try { child.stdin?.write(options.input); } catch {}
         child.stdin?.end();
       } else {
         child.stdin?.end();
