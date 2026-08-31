@@ -205,6 +205,24 @@ export default {
               const r = await svc.checkConnection();
               return { ok: true, connection: r, remoteHost: cfg.remoteHost };
             }
+            case 'preview': {
+              const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
+              const r = await svc.preview({ direction: dir as any });
+              return { ok: true, ...r };
+            }
+            case 'apply': {
+              const previewId = args && (args as any).previewId;
+              const direction = args && (args as any).direction === 'push' ? 'push' : 'pull';
+              const confirm = args && (args as any).confirm;
+              if (confirm !== true) return { ok: false, error: 'apply requires confirm:true' };
+              if (!previewId || typeof previewId !== 'string') return { ok: false, error: 'apply requires previewId' };
+              try {
+                const r = await svc.apply({ previewId, direction: direction as any, confirm: true });
+                return r as any;
+              } catch (e: any) {
+                return { ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase };
+              }
+            }
             default:
               return { ok: false, error: 'unknown method: ' + String(method) };
           }

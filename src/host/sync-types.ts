@@ -55,3 +55,13 @@ export interface SyncPreview extends SyncPlan {
   previewId: string;
   expiresAt: string;
 }
+
+export interface PreviewRequest {
+  direction: SyncDirection;
+}
+
+export interface ApplyRequest {
+  previewId: string;
+  direction: SyncDirection;
+  confirm: true;
+}
