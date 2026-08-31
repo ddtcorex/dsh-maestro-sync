@@ -13,6 +13,17 @@ const SYNC_CSS = `
 .sync-header { display:flex; align-items:center; gap:10px; }
 .sync-title { font-size:14px; font-weight:700; letter-spacing:-0.01em; }
 .sync-subtitle { color:var(--dsw-alias-label-secondary); font-size:12px; line-height:16px; margin-top:2px; }
+.sync-conn { display:flex; align-items:flex-start; gap:10px; padding:10px 12px; border-radius:10px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); }
+.sync-conn-ok { border-color:var(--dsw-alias-border-l1); }
+.sync-conn-bad { border-color:var(--dsw-alias-state-error-primary, #DC2626); }
+.sync-conn-dot { flex:none; width:8px; height:8px; border-radius:50%; margin-top:5px; }
+.sync-conn-dot-ok { background:var(--dsw-alias-state-success-primary, #16A34A); box-shadow:0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-success-primary, #16A34A) 16%, transparent); }
+.sync-conn-dot-bad { background:var(--dsw-alias-state-error-primary, #DC2626); box-shadow:0 0 0 4px color-mix(in srgb, var(--dsw-alias-state-error-primary, #DC2626) 12%, transparent); }
+.sync-conn-dot-checking { background:var(--dsw-alias-label-secondary); opacity:0.6; }
+.sync-conn-main { flex:1; min-width:0; }
+.sync-conn-title { font-size:12px; font-weight:600; line-height:16px; }
+.sync-conn-desc { font-size:11px; line-height:14px; color:var(--dsw-alias-label-secondary); margin-top:2px; word-break:break-word; }
+.sync-conn-hint { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-border-l1); border-radius:6px; padding:4px 6px; margin-top:6px; display:inline-block; max-width:100%; overflow:auto; }
 .sync-fields { display:flex; gap:10px; flex-wrap:wrap; }
 .sync-field { flex:1 1 160px; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-layer-2); padding:8px 10px; }
 .sync-field-label { font-size:11px; color:var(--dsw-alias-label-secondary); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
@@ -100,6 +111,8 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     try { return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null } catch { return null }
   })
   const [status, setStatus] = React.useState<any>(null)
+  const [connection, setConnection] = React.useState<{ ok: boolean; host: string; latencyMs?: number; error?: string } | null>(null)
+  const [checking, setChecking] = React.useState<boolean>(true)
   const [busy, setBusy] = React.useState<string | null>(null)
   const [result, setResult] = React.useState<{ kind: 'dry' | 'pull' | 'push'; copied: number; merged: number; added: number } | null>(null)
   const [error, setError] = React.useState<string>('')
@@ -111,16 +124,23 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
   }, [ctx])
 
   const loadStatus = React.useCallback(async () => {
-    setError('')
+    setError(''); setChecking(true)
     try {
       const res: any = await call('status', {})
       const data = res?.ok === true ? res : res?.ok === false ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'status failed'); return }
+      if (data?.ok === false) { setError(data?.error ?? 'status failed'); setChecking(false); return }
       setStatus(data)
-      const rh = (data as any).remoteHost ?? (data as any).remote ?? (data as any).remoteHostName
+      const conn = (data as any).connection ?? null
+      if (conn) setConnection(conn)
+      else {
+        // fallback: derive from remoteHost
+        const rh = (data as any).remoteHost ?? 'dsh-remote'
+        setConnection({ ok: true, host: rh })
+      }
+      const rh = (data as any).remoteHost ?? (data as any).connection?.host ?? (data as any).remote ?? (data as any).remoteHostName
       if (typeof rh === 'string' && rh) setRemoteHost(rh)
       else if (remoteHost === '…') setRemoteHost('dsh-remote')
-    } catch (e: any) { setError(e?.message ?? String(e)) }
+    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setChecking(false) }
   }, [call, remoteHost])
 
   React.useEffect(() => { void loadStatus() }, [loadStatus])
@@ -166,6 +186,10 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
 
   const summary = humanSummary(status)
 
+  const isConnected = connection?.ok === true
+  const isDisconnected = connection?.ok === false
+  const canSync = isConnected && !checking && !busy
+
   return React.createElement('div', { className: 'sync-card' },
     React.createElement('style', null, SYNC_CSS),
     React.createElement('div', { className: 'sync-header' },
@@ -173,7 +197,25 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
         React.createElement('div', { className: 'sync-title' }, 'Maestro Sync'),
         React.createElement('div', { className: 'sync-subtitle' }, summary),
       ),
-      React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy, 'aria-label': 'Refresh status' }, 'Refresh'),
+      React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy || checking, 'aria-label': 'Refresh status' }, checking ? 'Checking…' : 'Refresh'),
+    ),
+    // Connection banner — prerequisite for all sync actions
+    React.createElement('div', { className: `sync-conn ${isDisconnected ? 'sync-conn-bad' : 'sync-conn-ok'}` },
+      React.createElement('div', { className: `sync-conn-dot ${checking ? 'sync-conn-dot-checking' : isConnected ? 'sync-conn-dot-ok' : isDisconnected ? 'sync-conn-dot-bad' : 'sync-conn-dot-checking'}` }),
+      React.createElement('div', { className: 'sync-conn-main' },
+        checking ? React.createElement('div', { className: 'sync-conn-title' }, `Checking SSH to ${remoteHost}…`)
+          : isConnected ? React.createElement(React.Fragment, null,
+              React.createElement('div', { className: 'sync-conn-title' }, `Connected to ${connection!.host}${connection!.latencyMs != null ? ` · ${connection!.latencyMs}ms` : ''} · SSH ready`),
+              React.createElement('div', { className: 'sync-conn-desc' }, 'Preview, Pull and Push will use this host. If counts look wrong, hit Refresh.'),
+            )
+          : isDisconnected ? React.createElement(React.Fragment, null,
+              React.createElement('div', { className: 'sync-conn-title' }, `Cannot reach ${connection!.host} — sync is paused`),
+              React.createElement('div', { className: 'sync-conn-desc' }, connection!.error ? String(connection!.error).slice(0, 220) : 'SSH failed. Check that the host is reachable and your key is loaded.'),
+              React.createElement('div', { className: 'sync-conn-hint' }, `ssh -o ConnectTimeout=5 ${connection!.host} "echo ok"`),
+              React.createElement('div', { className: 'sync-conn-desc', style: { marginTop: '4px' } as any }, 'Fix: check ~/.ssh/config Host ' + connection!.host + ', ssh-agent, and that the remote ~/.dsh exists.'),
+            )
+          : React.createElement('div', { className: 'sync-conn-title' }, 'Checking connection…'),
+      ),
     ),
     React.createElement('div', { className: 'sync-fields' },
       React.createElement('div', { className: 'sync-field' },
@@ -204,10 +246,10 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
       ),
     ),
     React.createElement('div', { className: 'sync-actions' },
-      React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-btn', disabled: !!busy, 'data-testid': 'sync-dry-run' }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
-      React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-btn sync-btn-primary', disabled: !!busy, 'data-testid': 'sync-pull' }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
-      React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-btn', disabled: !!busy, 'data-testid': 'sync-push' }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
-      React.createElement('span', { className: 'sync-muted', style: { marginLeft: 'auto' } as any }, status?.remoteHost ? `Connected to ${status.remoteHost}` : 'Not connected'),
+      React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-dry-run' }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
+      React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-btn sync-btn-primary', disabled: !canSync, title: !isConnected ? `Cannot pull — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-pull' }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
+      React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot push — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-push' }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
+      React.createElement('span', { className: 'sync-muted', style: { marginLeft: 'auto' } as any }, checking ? 'Checking SSH…' : isConnected ? `SSH ${connection!.host} · ${connection!.latencyMs ?? '—'}ms` : isDisconnected ? 'SSH disconnected' : 'SSH unknown'),
     ),
     // File lists — compact human-readable
     status ? React.createElement('div', { className: 'sync-section' },
@@ -215,8 +257,10 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
         React.createElement('div', { className: 'sync-section-title' }, '📥 Coming from the other machine'),
         React.createElement('div', { className: 'sync-section-count' }, `${status.remoteOnlyFiles?.length ?? 0} files`),
       ),
-      (status.remoteOnlyFiles?.length ?? 0) === 0
-        ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no new files.')
+      isDisconnected
+        ? React.createElement('div', { className: 'sync-empty' }, `Cannot check remote — SSH to ${connection!.host} is not connected. Fix SSH then Refresh.`)
+        : (status.remoteOnlyFiles?.length ?? 0) === 0
+          ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no new files.')
         : (status.remoteOnlyFiles ?? []).slice(0, 5).map((p: string) => {
             const f = formatFile(p)
             return React.createElement('div', { key: p, className: 'sync-file' },
@@ -228,7 +272,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
               React.createElement('div', { className: 'sync-file-meta' }, f.meta),
             )
           }),
-      (status.remoteOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 5} more`) : null,
+      !isDisconnected && (status.remoteOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 5} more`) : null,
     ) : null,
     status ? React.createElement('div', { className: 'sync-section' },
       React.createElement('div', { className: 'sync-section-head' },

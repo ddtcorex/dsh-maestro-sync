@@ -20,6 +20,13 @@ export interface PullResult {
   added: number;
 }
 
+export interface ConnectionStatus {
+  ok: boolean;
+  host: string;
+  latencyMs?: number;
+  error?: string;
+}
+
 export interface StatusResult {
   localOnly: number;
   remoteOnly: number;
@@ -27,6 +34,8 @@ export interface StatusResult {
   localOnlyFiles: string[];
   remoteOnlyFiles: string[];
   bothFiles: string[];
+  connection: ConnectionStatus;
+  remoteHost: string;
 }
 
 function defaultExec(cmd: string): Promise<string> {
@@ -398,7 +407,42 @@ export class SyncService {
     return { copied: onlyLocal.length, merged, added };
   }
 
+  async checkConnection(): Promise<ConnectionStatus> {
+    const start = Date.now();
+    const cmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${this.remote} "echo ok" 2>&1`;
+    try {
+      const out = await this.exec(cmd);
+      const text = normalizeExecOutput(out).trim();
+      const ok = text.includes('ok') || text === 'ok';
+      // ssh may return ok with newline; also exit 0 implies ok even if output empty
+      if (ok) return { ok: true, host: this.remote, latencyMs: Date.now() - start };
+      // treat empty output as ok if exec did not throw (ssh succeeded)
+      return { ok: true, host: this.remote, latencyMs: Date.now() - start };
+    } catch (e: any) {
+      const msg = e?.message ?? String(e ?? '');
+      // include stderr if present in error object
+      const stderr = e?.stderr ?? e?.stdout ?? '';
+      const detail = [msg, stderr].filter(Boolean).join(' — ').slice(0, 400);
+      return { ok: false, host: this.remote, error: detail || 'SSH connection failed' };
+    }
+  }
+
   async status(): Promise<StatusResult> {
+    const connection = await this.checkConnection();
+    if (!connection.ok) {
+      // when offline, don't run remote find — just return local-only counts and empty remote
+      const localFiles = this.listLocalFiles();
+      return {
+        localOnly: localFiles.length,
+        remoteOnly: 0,
+        both: 0,
+        localOnlyFiles: localFiles,
+        remoteOnlyFiles: [],
+        bothFiles: [],
+        connection,
+        remoteHost: this.remote,
+      };
+    }
     const localFiles = this.listLocalFiles();
     const remoteFiles = await this.listRemoteFiles();
     const localSet = new Set(localFiles);
@@ -413,6 +457,8 @@ export class SyncService {
       localOnlyFiles,
       remoteOnlyFiles,
       bothFiles,
+      connection,
+      remoteHost: this.remote,
     };
   }
 }
