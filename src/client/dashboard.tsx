@@ -47,7 +47,7 @@ const DASH_CSS = `
 .sync-dash-file-path { font-size:11px; color:var(--dsw-alias-label-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sync-dash-file-meta { flex:none; font-size:11px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); border-radius:6px; padding:2px 6px; }
 .sync-dash-empty { padding:24px 14px; text-align:center; color:var(--dsw-alias-label-secondary); font-size:13px; line-height:18px; }
-.sync-dash-actions { display:flex; gap:10px; flex-wrap:wrap; padding:14px 20px; border-top:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); align-items:center; }
+.sync-dash-actions { display:flex; gap:10px; flex-wrap:wrap; padding:0; align-items:center; }
 .sync-dash-btn { min-height:36px; padding:0 14px; border-radius:8px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); font-size:13px; font-weight:500; cursor:pointer; display:inline-flex; align-items:center; gap:6px; color:var(--dsw-alias-label-primary); }
 .sync-dash-btn:hover{ background:var(--dsw-alias-bg-layer-2); border-color:var(--dsw-alias-border-l2); }
 .sync-dash-btn:focus-visible { outline:2px solid var(--dsw-alias-border-l2); outline-offset:2px; }
@@ -198,6 +198,14 @@ export function SyncDashboard({ ctx, onClose }: { ctx: any; onClose: () => void 
           React.createElement('div', { className: 'sync-dash-card-desc' }, hasRemote ? 'These will be brought here when you pull.' : 'Nothing new there.'),
         ),
       ),
+      React.createElement(
+        'div',
+        { className: 'sync-dash-actions', style: { padding: '4px 0 8px' } as any },
+        React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-dash-btn', disabled: !!busy }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
+        React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-dash-btn sync-dash-btn-primary', disabled: !!busy }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
+        React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-dash-btn', disabled: !!busy }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
+        React.createElement('span', { className: 'sync-dash-muted', style: { marginLeft: 'auto', alignSelf: 'center' } as any }, status?.remoteHost ? `Connected to ${status.remoteHost}` : 'Not connected'),
+      ),
       // File lists — human readable, not raw paths
       status ? React.createElement(
         'div',
@@ -267,14 +275,6 @@ export function SyncDashboard({ ctx, onClose }: { ctx: any; onClose: () => void 
       React.createElement('div', { className: 'sync-dash-muted', style: { textAlign: 'center', padding: '8px 0' } },
         'Your notes and sessions are merged — never overwritten. Daily notes are combined by unique entries, sessions by new lines.',
       ),
-    ),
-    React.createElement(
-      'div',
-      { className: 'sync-dash-actions' },
-      React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-dash-btn', disabled: !!busy }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
-      React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-dash-btn sync-dash-btn-primary', disabled: !!busy }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
-      React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-dash-btn', disabled: !!busy }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
-      React.createElement('span', { className: 'sync-dash-muted', style: { marginLeft: 'auto' } }, status?.remoteHost ? `Connected to ${status.remoteHost}` : 'Not connected'),
     ),
   )
 }
