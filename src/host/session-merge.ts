@@ -1,6 +1,9 @@
 /**
  * Session Zstandard line union. DSH session artifacts require the first
  * checksummed Zstandard frame to contain exactly their JSONL header line.
+ * Binary-safe: .jsonl.zstd is staged and merged only through validated Zstd artifact API.
+ * Zstd bytes remain Buffer and are never converted to UTF-8 string; only decompressed
+ * plaintext is stringified for line union. The standalone checksummed header frame is preserved.
  */
 import { copyFile, open, readFile, rename, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
