@@ -245,18 +245,85 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
   )
 }
 
-function SyncTrigger({ onOpen }: { onOpen: () => void }): React.ReactElement {
+function SyncIcon({ size = 16 }: { size?: number }): React.ReactElement {
+  return React.createElement(
+    'svg',
+    {
+      width: size,
+      height: size,
+      viewBox: '0 0 16 16',
+      fill: 'none',
+      'aria-hidden': true,
+      style: { flex: 'none', display: 'block' },
+    },
+    React.createElement('path', {
+      d: 'M3 8 A5 5 0 0 1 13 8 A5 5 0 0 1 3 8 M13 3 L13 5 L11 5 M3 13 L3 11 L5 11',
+      stroke: 'currentColor',
+      strokeWidth: 1.4,
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+    }),
+    React.createElement('path', {
+      d: 'M5 8 L8 8 L8 11 L11 8 L8 5 L8 8',
+      fill: 'currentColor',
+      opacity: 0,
+    }),
+  )
+}
+
+function SyncTrigger({ wide = true, onOpen }: { wide?: boolean; onOpen: () => void }): React.ReactElement {
+  const isWide = wide !== false
   return React.createElement(
     'button',
     {
       type: 'button',
+      'data-maestro-sync-trigger': '',
       onClick: onOpen,
-      className: 'sync-btn',
-      style: { width: '100%', justifyContent: 'flex-start' },
+      style: isWide
+        ? ({
+            flex: '1',
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            width: 'auto',
+            height: '42px',
+            margin: 0,
+            padding: '0 10px 0 8px',
+            boxSizing: 'border-box',
+            border: 'none',
+            borderRadius: '12px',
+            background: 'transparent',
+            cursor: 'pointer',
+            overflow: 'hidden',
+            color: 'var(--dsw-alias-label-primary)',
+            fontFamily: 'inherit',
+            fontSize: '14px',
+            lineHeight: '22px',
+            justifyContent: 'flex-start',
+            textAlign: 'left',
+          } as any)
+        : ({
+            flex: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '36px',
+            height: '36px',
+            padding: 0,
+            border: 'none',
+            borderRadius: '50%',
+            background: 'transparent',
+            cursor: 'pointer',
+            color: 'var(--dsw-alias-label-primary)',
+          } as any),
+      onMouseEnter: (e: any) => (e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)'),
+      onMouseLeave: (e: any) => (e.currentTarget.style.background = 'transparent'),
       'aria-label': 'Open Sync Dashboard',
       'data-testid': 'sync-open-dashboard',
     },
-    'Sync',
+    React.createElement(SyncIcon, { size: isWide ? 16 : 18 }),
+    isWide ? React.createElement('span', { style: { flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' } as any }, 'Sync') : null,
   )
 }
 
@@ -285,8 +352,9 @@ export function apply(ctx: any): void {
     () => {
       let open = false
       let setOpen: ((v: boolean) => void) | null = null
-      const TriggerWrap = () =>
+      const TriggerWrap = (props: any) =>
         React.createElement(SyncTrigger, {
+          wide: props?.wide ?? true,
           onOpen: () => {
             open = true
             setOpen?.(true)
