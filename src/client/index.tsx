@@ -156,7 +156,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
       React.createElement(
         'div',
         { style: { flex: '1 1 auto', minWidth: 0 } },
-        React.createElement('div', { className: 'sync-title' }, 'Sync'),
+        React.createElement('div', { className: 'sync-title' }, 'Maestro Sync'),
         React.createElement('div', { className: 'sync-subtitle' }, 'Merge memories & sessions between dsh-home ↔ dsh-company (no --delete)'),
       ),
       React.createElement(
@@ -323,7 +323,7 @@ function SyncTrigger({ wide = true, onOpen }: { wide?: boolean; onOpen: () => vo
       'data-testid': 'sync-open-dashboard',
     },
     React.createElement(SyncIcon, { size: isWide ? 16 : 18 }),
-    isWide ? React.createElement('span', { style: { flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' } as any }, 'Sync') : null,
+    isWide ? React.createElement('span', { style: { flex: 1, overflow: 'hidden', whiteSpace: 'nowrap' } as any }, 'Maestro Sync') : null,
   )
 }
 
@@ -335,7 +335,7 @@ export function apply(ctx: any): void {
     () => {
       const dispose = slots.inject('settings.section', () =>
         slots.register(
-          { name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Sync' },
+          { name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' },
           () => React.createElement(SyncPanel, { ctx }),
         ),
       )
@@ -378,7 +378,7 @@ export function apply(ctx: any): void {
         if (!isOpen) return null
         return React.createElement(SyncDashboard, { ctx, onClose: () => setIsOpen(false) })
       }
-      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 40, label: () => 'Sync' }, () => React.createElement(TriggerWrap)))
+      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 40, label: () => 'Maestro Sync' }, () => React.createElement(TriggerWrap)))
       const d2 = slots.inject('shell.overlay', () => slots.register({ name: 'shell.overlay', id: 'maestro-sync-dashboard', order: 40 }, () => React.createElement(OverlayWrap)))
       return () => {
         try {
