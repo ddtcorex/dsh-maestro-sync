@@ -69,6 +69,28 @@ export class SyncService {
    * List local files under localDsh, returning relative paths.
    * Uses fs walk (find equivalent) for test-friendly injection.
    */
+  private isRelevantSyncFile(rel: string): boolean {
+    // Only sync DSH state that matters: memories, sessions, maestro, and a few root configs.
+    // Exclude profiles/node_modules, logs, credentials, caches, supervisor reports, etc.
+    // Must be strict: only top-level memories/ and sessions/, not .supervisor/failed/**/memories/*
+    if (rel.includes('node_modules')) return false;
+    if (rel.endsWith('.log')) return false;
+    if (rel.endsWith('.credentials.yaml')) return false;
+    if (rel.includes('.cloudflared')) return false;
+    if (rel.startsWith('profiles/')) return false; // profiles are machine-local (tunnel, skill links)
+    if (rel.startsWith('storages/')) return false; // local cache, not needed
+    if (rel.startsWith('tools/')) return false;
+    if (rel.startsWith('skills/')) return false;
+    if (rel.startsWith('.supervisor/')) return false; // supervisor is machine-local (reports, failed, etc.)
+    if (rel.startsWith('.agent-presets/')) return false;
+    // keep: memories/, sessions/, maestro/, and a few root configs
+    if (rel.startsWith('memories/')) return true;
+    if (rel.startsWith('sessions/')) return true;
+    if (rel.startsWith('maestro/')) return true;
+    if (rel === 'settings.yaml' || rel === '.anonymous-user-id' || rel === 'settings.json') return true;
+    return false;
+  }
+
   listLocalFiles(): string[] {
     const root = this.localDsh;
     const result: string[] = [];
@@ -122,14 +144,21 @@ export class SyncService {
     }
     walk(root, '');
     // normalize to posix separators for consistency with remote
-    return result.map((p) => p.split(path.sep).join('/')).sort();
+    const all = result.map((p) => p.split(path.sep).join('/')).sort();
+    // filter to only relevant sync files
+    return all.filter((rel) => this.isRelevantSyncFile(rel));
   }
 
   /**
    * List remote files via ssh find, returning relative paths.
+   * Only lists relevant DSH state (memories, sessions, etc.), not entire ~/.dsh with node_modules.
    */
   async listRemoteFiles(): Promise<string[]> {
-    const cmd = `ssh ${this.remote} "find ${this.remoteDsh} -type f 2>/dev/null | head -n 10000"`;
+    // Use explicit dirs instead of -path to avoid quoting/expansion issues with $HOME and *
+    // Expand ~ to $HOME for the find command (ssh will expand $HOME on remote)
+    const remoteDshExp = this.remoteDsh.startsWith('~/') ? `$HOME/${this.remoteDsh.slice(2)}` : this.remoteDsh;
+    const findExpr = `find ${remoteDshExp}/memories ${remoteDshExp}/sessions ${remoteDshExp}/maestro -type f 2>/dev/null; find ${remoteDshExp} -maxdepth 1 -type f -name "settings.yaml" -o -name ".anonymous-user-id" 2>/dev/null | head -n 50000`;
+    const cmd = `ssh ${this.remote} "${findExpr}"`;
     let out: any = '';
     try {
       out = await this.exec(cmd);
@@ -150,8 +179,9 @@ export class SyncService {
       // already relative
       return p.replace(/^\//, '');
     });
-    // filter empty and dedup, keep sorted for determinism
-    return [...new Set(rel.filter(Boolean))].sort();
+    // filter empty and dedup, keep sorted for determinism, and apply same relevance filter as local
+    const filtered = rel.filter(Boolean).filter((r) => this.isRelevantSyncFile(r));
+    return [...new Set(filtered)].sort();
   }
 
   private async fetchRemoteFile(relPath: string): Promise<string> {
@@ -282,6 +312,11 @@ export class SyncService {
       await this.copyRemoteFiles(onlyRemote, 'pull');
     }
 
+    // Dry-run: skip per-file fetch/merge (would be 900+ ssh cats and timeout). Just report copied.
+    if (dryRun) {
+      return { copied: onlyRemote.length, merged: 0, added: 0 };
+    }
+
     let merged = 0;
     let added = 0;
     for (const rel of both) {
@@ -308,7 +343,7 @@ export class SyncService {
       if (resultAdded > 0) {
         merged++;
         added += resultAdded;
-        if (!dryRun && mergedContent !== null) {
+        if (mergedContent !== null) {
           const full = path.join(this.localDsh, rel);
           await this.atomicWriteWithBackup(full, mergedContent);
         }
@@ -329,6 +364,11 @@ export class SyncService {
 
     if (!dryRun && onlyLocal.length > 0) {
       await this.copyRemoteFiles(onlyLocal, 'push');
+    }
+
+    // Dry-run: skip per-file fetch (900+ ssh cats) — just report copied
+    if (dryRun) {
+      return { copied: onlyLocal.length, merged: 0, added: 0 };
     }
 
     // For push, merging both would typically happen on remote side;
