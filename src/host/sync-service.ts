@@ -1,9 +1,12 @@
-// Task 2: transport now via ProcessRunner/Transport (argv-only)
 import * as nodeFs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { createHash } from 'node:crypto';
 import { mergeDelimited } from './merge.js';
 import { mergeZstdLines } from './session-merge.js';
+import { hashBuffer } from './snapshot.js';
+import { buildPreview } from './sync-plan.js';
+import type { SyncDirection } from './sync-types.js';
 
 export type ExecFn = (cmd: string) => Promise<any>;
 
@@ -462,5 +465,37 @@ export class SyncService {
       connection,
       remoteHost: this.remote,
     };
+  }
+
+  async preview(opts: { direction: SyncDirection }): Promise<any> {
+    const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
+    const connection = await this.checkConnection();
+    if (!connection.ok) {
+      throw Object.assign(new Error(`cannot preview while offline: ${connection.error}`), { phase: 'validate', code: 'OFFLINE' });
+    }
+    const localFiles = this.listLocalFiles();
+    const remoteFiles = await this.listRemoteFiles();
+    const localContents = new Map<string, Buffer>();
+    const remoteContents = new Map<string, Buffer>();
+    const localSnapshots: any[] = [];
+    const remoteSnapshots: any[] = [];
+    for (const p of localFiles) {
+      const content = this.readLocalFile(p);
+      const buf = Buffer.from(content, 'utf-8');
+      localContents.set(p, buf);
+      const sha = hashBuffer(buf);
+      const kind = p.endsWith('.zstd') ? 'session' : p.endsWith('.jsonl') ? 'jsonl' : 'memory';
+      localSnapshots.push({ path: p, sha256: sha, size: buf.length, kind });
+    }
+    for (const p of remoteFiles) {
+      const content = await this.fetchRemoteFile(p);
+      const buf = Buffer.from(content, 'utf-8');
+      remoteContents.set(p, buf);
+      const sha = hashBuffer(buf);
+      const kind = p.endsWith('.zstd') ? 'session' : p.endsWith('.jsonl') ? 'jsonl' : 'memory';
+      remoteSnapshots.push({ path: p, sha256: sha, size: buf.length, kind });
+    }
+    const preview = await buildPreview(localSnapshots, remoteSnapshots, direction, localContents, remoteContents);
+    return { ...preview, connection, remoteHost: this.remote };
   }
 }
