@@ -378,7 +378,7 @@ export function apply(ctx: any): void {
         if (!isOpen) return null
         return React.createElement(SyncDashboard, { ctx, onClose: () => setIsOpen(false) })
       }
-      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 40, label: () => 'Maestro Sync' }, () => React.createElement(TriggerWrap)))
+      const d1 = slots.inject('sidebar.footer.action', () => slots.register({ name: 'sidebar.footer.action', id: 'maestro-sync-trigger', order: 10, label: () => 'Maestro Sync' }, () => React.createElement(TriggerWrap)))
       const d2 = slots.inject('shell.overlay', () => slots.register({ name: 'shell.overlay', id: 'maestro-sync-dashboard', order: 40 }, () => React.createElement(OverlayWrap)))
       return () => {
         try {
