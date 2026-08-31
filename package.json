@@ -9,6 +9,10 @@
   "types": "./lib/index.d.ts",
   "exports": {
     ".": "./lib/index.js",
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -18,8 +22,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "build:client": "node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.json && pnpm run build:client",
+    "build:client": "tsc -p tsconfig.client.json && node scripts/build-client.mjs",
     "verify": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
     "test": "vitest run"
   },
@@ -42,6 +46,7 @@
     "@deepseek-ai/cordis": "^4.0.1"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.1.2-alpha.2",
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
