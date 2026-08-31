@@ -182,7 +182,24 @@ export default {
             }
             case 'status': {
               const r = await svc.status();
-              return { ok: true, ...r };
+              // slim file lists to stay within 64KB RPC limit (original 919 files ~95KB -> slim 8 files ~1.4KB)
+              const slim = {
+                localOnly: (r as any).localOnly,
+                remoteOnly: (r as any).remoteOnly,
+                both: (r as any).both,
+                localOnlyFiles: (r as any).localOnlyFiles?.slice(0, 8) ?? [],
+                remoteOnlyFiles: (r as any).remoteOnlyFiles?.slice(0, 8) ?? [],
+                bothFiles: (r as any).bothFiles?.slice(0, 8) ?? [],
+                connection: (r as any).connection,
+                remoteHost: (r as any).remoteHost,
+              };
+              try {
+                const len = JSON.stringify(r).length;
+                const slimLen = JSON.stringify(slim).length;
+                console.log('[maestro-sync] status', JSON.stringify({ remoteHost: (r as any).remoteHost, conn: (r as any).connection, localOnly: (r as any).localOnly, remoteOnly: (r as any).remoteOnly, both: (r as any).both, len, slimLen, keys: Object.keys(slim) }).slice(0, 2000));
+                console.log('[maestro-sync] slim', JSON.stringify(slim).slice(0, 2000));
+              } catch {}
+              return { ok: true, ...slim };
             }
             case 'check': {
               const r = await svc.checkConnection();

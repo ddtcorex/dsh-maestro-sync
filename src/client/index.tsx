@@ -206,19 +206,22 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     setError(''); setChecking(true)
     try {
       const res: any = await call('status', {})
+      // debug: log raw response for diagnosis (visible in browser console)
+      try { console.log('[maestro-sync] status raw', JSON.stringify(res).slice(0, 2000)) } catch {}
       const data = res?.ok === true ? res : res?.ok === false ? res : { ok: true, ...res }
       if (data?.ok === false) { setError(data?.error ?? 'status failed'); setChecking(false); return }
+      try { console.log('[maestro-sync] status data', JSON.stringify({ remoteHost: (data as any).remoteHost, connection: (data as any).connection, localOnly: (data as any).localOnly, remoteOnly: (data as any).remoteOnly }).slice(0, 2000)) } catch {}
       setStatus(data)
       const conn = (data as any).connection ?? null
       if (conn) setConnection(conn)
       else {
         // fallback: derive from remoteHost
-        const rh = (data as any).remoteHost ?? 'dsh-remote'
+        const rh = (data as any).remoteHost ?? 'kai@ssh.ddtcorex.com'
         setConnection({ ok: true, host: rh })
       }
       const rh = (data as any).remoteHost ?? (data as any).connection?.host ?? (data as any).remote ?? (data as any).remoteHostName
       if (typeof rh === 'string' && rh) setRemoteHost(rh)
-      else if (remoteHost === '…') setRemoteHost('dsh-remote')
+      else if (remoteHost === '…') setRemoteHost('kai@ssh.ddtcorex.com')
     } catch (e: any) { setError(e?.message ?? String(e)) } finally { setChecking(false) }
   }, [call, remoteHost])
 
