@@ -184,6 +184,10 @@ export default {
               const r = await svc.status();
               return { ok: true, ...r };
             }
+            case 'check': {
+              const r = await svc.checkConnection();
+              return { ok: true, connection: r, remoteHost: cfg.remoteHost };
+            }
             default:
               return { ok: false, error: 'unknown method: ' + String(method) };
           }
