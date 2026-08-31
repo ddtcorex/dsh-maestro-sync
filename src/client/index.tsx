@@ -232,15 +232,38 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     try { if (typeof localStorage !== 'undefined') localStorage.setItem('dsh-maestro-sync:lastSync', ts) } catch {}
   }, [])
 
-  const handleDryRun = React.useCallback(async () => {
-    setBusy('dry'); setError(''); setResult(null)
+  const [preview, setPreview] = React.useState<any>(null)
+  const [showConfirm, setShowConfirm] = React.useState(false)
+  void showConfirm; void preview;
+  const handlePreview = React.useCallback(async (direction: 'pull' | 'push') => {
+    setBusy('dry'); setError(''); setResult(null); setPreview(null)
     try {
-      const res: any = await call('pull', { dryRun: true })
+      const res: any = await call('preview', { direction })
       const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
       if (data?.ok === false) { setError(data?.error ?? 'Preview failed'); return }
-      setResult({ kind: 'dry', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
+      setPreview(data)
+      setShowConfirm(true)
     } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }, [call])
+  const handleDryRun = React.useCallback(async () => {
+    await handlePreview('pull')
+  }, [handlePreview])
+  void handleDryRun
+  const handleApply = React.useCallback(async () => {
+    if (!preview?.previewId) { setError('No preview to apply'); return }
+    setBusy('apply'); setError('')
+    try {
+      const direction = preview?.direction ?? 'pull'
+      const res: any = await call('apply', { previewId: preview.previewId, direction, confirm: true })
+      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
+      if (data?.ok === false) { setError(data?.error ?? 'Apply failed'); return }
+      setResult({ kind: direction, copied: data.committed?.length ?? data.copied ?? 0, merged: data.summary?.merged ?? 0, added: data.summary?.added ?? 0 })
+      setPreview(null); setShowConfirm(false)
+      persistLastSync(new Date().toISOString())
+      await loadStatus()
+    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
+  }, [call, preview, loadStatus, persistLastSync])
+  void handleApply;
 
   const handlePull = React.useCallback(async () => {
     setBusy('pull'); setError(''); setResult(null)
@@ -266,6 +289,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
   }, [call, loadStatus, persistLastSync])
 
+  void handleDryRun; void handlePull; void handlePush
   const summary = humanSummary(status)
 
   const isConnected = connection?.ok === true
@@ -341,11 +365,33 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
       ),
     ),
     React.createElement('div', { className: 'sync-actions' },
-      React.createElement('button', { type: 'button', onClick: handleDryRun, className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-dry-run' }, busy === 'dry' ? 'Checking…' : 'Preview changes'),
-      React.createElement('button', { type: 'button', onClick: handlePull, className: 'sync-btn sync-btn-primary', disabled: !canSync, title: !isConnected ? `Cannot pull — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-pull' }, busy === 'pull' ? 'Pulling…' : 'Pull from other machine'),
-      React.createElement('button', { type: 'button', onClick: handlePush, className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot push — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-push' }, busy === 'push' ? 'Pushing…' : 'Push to other machine'),
+      React.createElement('button', { type: 'button', onClick: () => handlePreview('pull'), className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-preview-pull' }, busy === 'dry' ? 'Checking…' : 'Preview Pull'),
+      React.createElement('button', { type: 'button', onClick: () => handlePreview('push'), className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-preview-push' }, busy === 'dry' ? 'Checking…' : 'Preview Push'),
       React.createElement('span', { className: 'sync-muted', style: { marginLeft: 'auto' } as any }, checking ? 'Checking SSH…' : isConnected ? `SSH ${connection!.host} · ${connection!.latencyMs ?? '—'}ms` : isDisconnected ? 'SSH disconnected' : 'SSH unknown'),
     ),
+    preview ? React.createElement('div', { className: 'sync-section', 'aria-live': 'polite' } as any,
+      React.createElement('div', { className: 'sync-section-head' },
+        React.createElement('div', { className: 'sync-section-title' }, `Preview — ${preview.direction ?? 'pull'} · ${preview.summary?.copied ?? 0} copy · ${preview.summary?.merged ?? 0} merge · ${preview.summary?.skipped ?? 0} skip · ${preview.summary?.conflicts ?? 0} conflict`),
+        React.createElement('div', { className: 'sync-section-count' }, `${preview.actions?.length ?? 0} files`),
+      ),
+      (preview.actions ?? []).slice(0, 20).map((a: any) => {
+        const f = formatFile(a.path)
+        const actionLabel = a.action === 'copy' ? 'copy' : a.action === 'merge' ? `merge +${a.added ?? 0}` : a.action === 'skip' ? 'skip' : 'conflict'
+        return React.createElement('div', { key: a.path, className: 'sync-file' },
+          React.createElement('div', { className: 'sync-file-icon' }, f.icon),
+          React.createElement('div', { className: 'sync-file-main' },
+            React.createElement('div', { className: 'sync-file-title' }, `${f.title} — ${actionLabel}`),
+            React.createElement('div', { className: 'sync-file-path' }, a.path),
+          ),
+          React.createElement('div', { className: 'sync-file-meta' }, a.reason ?? a.action),
+        )
+      }),
+      React.createElement('div', { className: 'sync-actions', style: { padding: '10px 12px' } as any },
+        React.createElement('button', { type: 'button', onClick: handleApply, className: 'sync-btn sync-btn-primary', disabled: busy === 'apply', 'data-testid': 'sync-apply' }, busy === 'apply' ? 'Applying…' : `Apply ${preview.direction ?? 'pull'} — ${preview.summary?.copied ?? 0} copy, ${preview.summary?.merged ?? 0} merge`),
+        React.createElement('button', { type: 'button', onClick: () => { setPreview(null); setShowConfirm(false) }, className: 'sync-btn', disabled: busy === 'apply' }, 'Cancel'),
+        React.createElement('span', { className: 'sync-muted' }, `Preview ${preview.previewId?.slice(0, 8) ?? ''} · expires ${preview.expiresAt ? new Date(preview.expiresAt).toLocaleTimeString() : ''} · host ${preview.remoteHost ?? remoteHost}`),
+      ),
+    ) : null,
     // File lists — compact human-readable
     status ? React.createElement('div', { className: 'sync-section' },
       React.createElement('div', { className: 'sync-section-head' },
