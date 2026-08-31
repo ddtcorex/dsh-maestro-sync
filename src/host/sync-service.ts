@@ -44,7 +44,8 @@ function defaultExec(cmd: string): Promise<string> {
     import('node:child_process').then(({ exec }) => {
       import('node:util').then(({ promisify }) => {
         const pExec = promisify(exec);
-        (pExec as any)(cmd)
+        // 8s timeout so UI never hangs forever (cloudflared/ssh may stall)
+        (pExec as any)(cmd, { timeout: 8000 })
           .then((res: any) => resolve(typeof res === 'string' ? res : res.stdout ?? ''))
           .catch(reject);
       });
