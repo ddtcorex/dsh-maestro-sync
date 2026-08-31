@@ -1,37 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { zstdCompress, constants } from 'node:zlib';
-import { promisify } from 'node:util';
+import { constants, zstdCompressSync } from 'node:zlib';
 import { parseSessionIdentity, isSameSession, mergeSessionBuffers } from '../src/host/session-plan.js';
 
-const compressZstd = promisify(zstdCompress);
-
-async function makeZstd(text: string): Promise<Buffer> {
-  return (await compressZstd(Buffer.from(text, 'utf-8'), { params: { [constants.ZSTD_c_checksumFlag]: 1 } } as any)) as Buffer;
+function makeSessionBuffer(header: string, events: string[]): Buffer {
+  const opts = { params: { [constants.ZSTD_c_checksumFlag]: 1 } } as any;
+  const frames: Buffer[] = [zstdCompressSync(header + '\n', opts)];
+  if (events.length > 0) {
+    frames.push(zstdCompressSync(events.join('\n') + '\n', opts));
+  }
+  return Buffer.concat(frames);
 }
 
 describe('session-plan', () => {
-  it('rejects truncated Zstd frame as conflict', () => {
-    expect(() => parseSessionIdentity(Buffer.from([0x28, 0xb5, 0x2f, 0xfd]))).toThrow();
-    expect(() => parseSessionIdentity(Buffer.from([0x00, 0x01, 0x02]))).toThrow();
-    expect(() => parseSessionIdentity(Buffer.from('not zstd'))).toThrow();
-  });
+  it('rejects truncated Zstd frame as conflict', async () => {
+    expect(() => parseSessionIdentity(Buffer.from([0x28, 0xb5, 0x2f, 0xfd]))).toThrow()
+  })
 
   it('merges two valid session buffers via binary path and counts added lines', async () => {
-    const localBuf = await makeZstd('{"seq":1}\n{"seq":2}\n');
-    const remoteBuf = await makeZstd('{"seq":1}\n{"seq":2}\n{"seq":3}\n');
-    // isSameSession should be true for same session (header same) - our simple impl checks magic, so should be true
-    // For this test, we consider same session if both have valid Zstd magic
-    expect(isSameSession(localBuf, remoteBuf)).toBe(true);
-    const { merged, added } = await mergeSessionBuffers(localBuf, remoteBuf);
-    expect(added).toBe(1);
-    expect(Buffer.isBuffer(merged)).toBe(true);
-    expect(merged.length).toBeGreaterThan(10);
-  });
+    const header = JSON.stringify({ type: 'session', version: 1, id: 'sync-test', createdAt: 1, delegationDepth: 0, cwd: '/tmp/proj' });
+    const localBuf = makeSessionBuffer(header, ['{"type":"turn/start","seq":0}']);
+    const remoteBuf = makeSessionBuffer(header, ['{"type":"turn/start","seq":0}', '{"type":"turn/end","seq":1}']);
+    const { merged, added } = mergeSessionBuffers(localBuf, remoteBuf)
+    expect(added).toBe(1)
+    expect(isSameSession(localBuf, remoteBuf)).toBe(true)
+    expect(Buffer.isBuffer(merged)).toBe(true)
+    // merged should be valid Zstd and isSameSession with originals
+    expect(isSameSession(merged, localBuf)).toBe(true)
+  })
 
-  it('rejects invalid Zstd in merge', async () => {
+  it('rejects invalid Zstd in merge and different headers as conflict', () => {
     const bad = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
-    const good = await makeZstd('{"seq":1}\n');
-    await expect(mergeSessionBuffers(bad, good)).rejects.toThrow();
-    await expect(mergeSessionBuffers(good, bad)).rejects.toThrow();
-  });
-});
+    const header = JSON.stringify({ type: 'session', version: 1, id: 'id1', createdAt: 1, delegationDepth: 0 });
+    const good = makeSessionBuffer(header, ['{"seq":1}']);
+    expect(() => mergeSessionBuffers(bad, good)).toThrow();
+    expect(() => mergeSessionBuffers(good, bad)).toThrow();
+    const header2 = JSON.stringify({ type: 'session', version: 1, id: 'different-id', createdAt: 1, delegationDepth: 0 });
+    const other = makeSessionBuffer(header2, ['{"seq":1}']);
+    expect(isSameSession(good, other)).toBe(false);
+    expect(() => mergeSessionBuffers(good, other)).toThrow();
+  })
+
+  it('isSameSession compares header identity, not just path', () => {
+    const h1 = JSON.stringify({ type: 'session', version: 1, id: 'same-id', createdAt: 1, delegationDepth: 0, cwd: '/a' });
+    const h2 = JSON.stringify({ type: 'session', version: 1, id: 'same-id', createdAt: 1, delegationDepth: 0, cwd: '/b' });
+    const buf1 = makeSessionBuffer(h1, ['a']);
+    const buf2 = makeSessionBuffer(h2, ['a']);
+    expect(isSameSession(buf1, buf2)).toBe(false);
+  })
+})

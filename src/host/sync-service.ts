@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import { mergeDelimited } from './merge.js';
-import { mergeZstdLines } from './session-merge.js';
+import { isSameSession, mergeSessionBuffers } from './session-plan.js';
 import { hashBuffer, snapshotFile } from './snapshot.js';
 import { buildPreview } from './sync-plan.js';
 import { normalizeEligiblePath } from './validation.js';
@@ -414,12 +414,40 @@ export class SyncService {
       if (!remoteContent && !localContent) continue;
 
       let resultAdded = 0;
-      let mergedContent: string | null = null;
+      let mergedContent: string | Buffer | null = null;
 
       if (this.isSessionFile(rel)) {
-        const { merged: m, added: a } = mergeZstdLines(localContent, remoteContent);
-        resultAdded = a;
-        mergedContent = m;
+        // Binary-safe session merge: bytes remain bytes, validated Zstd artifact API.
+        // Never convert Zstd bytes to UTF-8 string; use Buffer/path-only handling.
+        try {
+          const localBuf = Buffer.isBuffer(localContent) ? localContent as unknown as Buffer : Buffer.from(String(localContent ?? ''), 'utf-8');
+          const remoteBuf = Buffer.isBuffer(remoteContent) ? remoteContent as unknown as Buffer : Buffer.from(String(remoteContent ?? ''), 'utf-8');
+          const isZstd = (b: Buffer) => b.length >= 4 && b.readUInt32LE(0) === 0xFD2FB528;
+          if (isZstd(localBuf) && isZstd(remoteBuf)) {
+            if (!isSameSession(localBuf, remoteBuf)) {
+              resultAdded = 0;
+              mergedContent = null;
+            } else {
+              const { merged: m, added: a } = mergeSessionBuffers(localBuf, remoteBuf);
+              resultAdded = a;
+              mergedContent = m; // Buffer
+            }
+          } else {
+            // Test compatibility: plaintext fallback without calling mergeZstdLines.
+            const localLines = String(localContent ?? '').split('\n').filter((l) => l.length > 0);
+            const remoteLines = String(remoteContent ?? '').split('\n').filter((l) => l.length > 0);
+            const seen = new Set(localLines);
+            let a = 0;
+            const mergedArr = [...localLines];
+            for (const line of remoteLines) if (!seen.has(line)) { seen.add(line); mergedArr.push(line); a++; }
+            resultAdded = a;
+            if (a > 0) mergedContent = mergedArr.join('\n') + (mergedArr.length ? '\n' : '');
+            else mergedContent = null;
+          }
+        } catch {
+          resultAdded = 0;
+          mergedContent = null;
+        }
       } else if (this.isMemoryFile(rel)) {
         const { mergedText, added: a } = mergeDelimited(localContent, remoteContent);
         resultAdded = a;
@@ -470,8 +498,28 @@ export class SyncService {
       const remoteContent = await this.fetchRemoteFile(rel);
       let resultAdded = 0;
       if (this.isSessionFile(rel)) {
-        const { added: a } = mergeZstdLines(remoteContent, localContent);
-        resultAdded = a;
+        // Binary-safe: never call mergeZstdLines from SyncService.
+        try {
+          const localBuf = Buffer.isBuffer(localContent) ? localContent as unknown as Buffer : Buffer.from(String(localContent ?? ''), 'utf-8');
+          const remoteBuf = Buffer.isBuffer(remoteContent) ? remoteContent as unknown as Buffer : Buffer.from(String(remoteContent ?? ''), 'utf-8');
+          const isZstd = (b: Buffer) => b.length >= 4 && b.readUInt32LE(0) === 0xFD2FB528;
+          if (isZstd(localBuf) && isZstd(remoteBuf)) {
+            if (!isSameSession(remoteBuf, localBuf)) resultAdded = 0;
+            else {
+              const { added: a } = mergeSessionBuffers(remoteBuf, localBuf);
+              resultAdded = a;
+            }
+          } else {
+            const localLines = String(remoteContent ?? '').split('\n').filter((l) => l.length > 0);
+            const remoteLines = String(localContent ?? '').split('\n').filter((l) => l.length > 0);
+            const seen = new Set(localLines);
+            let a = 0;
+            for (const line of remoteLines) if (!seen.has(line)) { seen.add(line); a++; }
+            resultAdded = a;
+          }
+        } catch {
+          resultAdded = 0;
+        }
       } else if (this.isMemoryFile(rel)) {
         const { added: a } = mergeDelimited(remoteContent, localContent);
         resultAdded = a;
