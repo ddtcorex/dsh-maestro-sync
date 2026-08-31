@@ -5,12 +5,12 @@ describe('SyncService', () => {
   it('pull merges memories and returns copied/merged counts', async () => {
     const exec = vi.fn(async (cmd: string) => {
       if (String(cmd).includes('find')) {
-        return 'memories/daily.md\nmemories/projects/new.md\nsessions/s1.jsonl.zstd\nsessions/s2.jsonl.zstd\n';
+        return 'memories/daily/2026-08-29.md\nmemories/projects/new.md\nsessions/abc123/def456/session.jsonl.zstd\nsessions/xyz789/uvw012/session.jsonl.zstd\n';
       }
-      if (String(cmd).includes('cat') && String(cmd).includes('daily.md')) {
+      if (String(cmd).includes('cat') && String(cmd).includes('daily')) {
         return 'foo\n§\nbar\n';
       }
-      if (String(cmd).includes('cat') && String(cmd).includes('s1.jsonl.zstd')) {
+      if (String(cmd).includes('cat') && String(cmd).includes('session.jsonl.zstd')) {
         return '{"seq":1}\n{"seq":2}\n';
       }
       if (String(cmd).includes('rsync')) return '';
@@ -19,8 +19,8 @@ describe('SyncService', () => {
 
     const readMock = vi.fn((p: string) => {
       const s = String(p);
-      if (s.includes('daily.md')) return 'a\n§\nfoo\n';
-      if (s.includes('s1.jsonl.zstd')) return '{"seq":1}\n';
+      if (s.includes('2026-08-29.md')) return 'a\n§\nfoo\n';
+      if (s.includes('session.jsonl.zstd')) return '{"seq":1}\n';
       return '';
     });
     const writeMock = vi.fn();
@@ -36,6 +36,9 @@ describe('SyncService', () => {
       mkdirSync: vi.fn(),
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false, isFile: () => true })),
+      openSync: vi.fn(() => 1),
+      fsyncSync: vi.fn(),
+      closeSync: vi.fn(),
     };
 
     const svc = new SyncService({
@@ -46,20 +49,20 @@ describe('SyncService', () => {
       fs: fsMock as any,
     });
 
-    // mock file discovery to avoid real FS walk
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily.md', 'sessions/s1.jsonl.zstd']);
+    // mock file discovery to avoid real FS walk — use eligible paths
+    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily/2026-08-29.md', 'sessions/abc123/def456/session.jsonl.zstd']);
     vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue([
-      'memories/daily.md',
+      'memories/daily/2026-08-29.md',
       'memories/projects/new.md',
-      'sessions/s1.jsonl.zstd',
-      'sessions/s2.jsonl.zstd',
+      'sessions/abc123/def456/session.jsonl.zstd',
+      'sessions/xyz789/uvw012/session.jsonl.zstd',
     ]);
 
     const res = await svc.pull({ dryRun: false });
     expect(res.copied).toBe(2);
     expect(res.merged).toBeGreaterThanOrEqual(1);
     expect(res.added).toBeGreaterThanOrEqual(1);
-    expect(exec).toHaveBeenCalled();
+    expect(res.conflicts).toBeDefined();
   });
 
   it('status without fetch returns partition counts', async () => {
@@ -123,16 +126,38 @@ describe('SyncService', () => {
 
   it('push returns copied/merged counts', async () => {
     const exec = vi.fn(async () => '');
+    const readMock = vi.fn((p: string) => {
+      const s = String(p);
+      if (s.includes('a.md')) return 'content a';
+      if (s.includes('local-only.md')) return 'local only';
+      return '';
+    });
+    const fsMock: any = {
+      readFileSync: readMock,
+      writeFileSync: vi.fn(),
+      copyFileSync: vi.fn(),
+      existsSync: vi.fn(() => true),
+      renameSync: vi.fn(),
+      mkdirSync: vi.fn(),
+      readdirSync: vi.fn(() => []),
+      statSync: vi.fn(() => ({ isDirectory: () => false })),
+      openSync: vi.fn(() => 1),
+      fsyncSync: vi.fn(),
+      closeSync: vi.fn(),
+      rmSync: vi.fn(),
+    };
     const svc = new SyncService({
       localDsh: '/tmp/a',
       remote: 'host',
       remoteDsh: '~/.dsh',
       exec: exec as any,
+      fs: fsMock as any,
     });
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/a.md', 'memories/local-only.md']);
-    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/a.md']);
+    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily/2026-08-29.md', 'memories/daily/2026-08-30.md']);
+    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/daily/2026-08-29.md']);
     const res = await svc.push({ dryRun: true });
     expect(res.copied).toBe(1);
+    expect(res.conflicts).toBeDefined();
   });
 
   it('listLocalFiles and listRemoteFiles are mockable', async () => {

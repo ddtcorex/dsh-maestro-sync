@@ -7,20 +7,28 @@ export const PREVIEW_TTL_MS = 60_000;
 export const MAX_PREVIEWS = 50;
 
 const previews = new Map<string, SyncPreview>();
+const previewDirections = new Map<string, SyncDirection>();
 
 function pruneExpired(): void {
   const now = Date.now();
   for (const [id, p] of previews.entries()) {
-    if (new Date(p.expiresAt).getTime() <= now) previews.delete(id);
+    if (new Date(p.expiresAt).getTime() <= now) {
+      previews.delete(id);
+      previewDirections.delete(id);
+    }
   }
   if (previews.size > MAX_PREVIEWS) {
     const entries = [...previews.entries()].sort((a, b) => new Date(a[1].expiresAt).getTime() - new Date(b[1].expiresAt).getTime());
     const toDelete = previews.size - MAX_PREVIEWS;
-    for (let i = 0; i < toDelete; i++) previews.delete(entries[i]![0]);
+    for (let i = 0; i < toDelete; i++) {
+      const delId = entries[i]![0];
+      previews.delete(delId);
+      previewDirections.delete(delId);
+    }
   }
 }
 
-export function storePreview(preview: SyncPreview): void {
+export function storePreview(preview: SyncPreview, direction?: SyncDirection): void {
   pruneExpired();
   if (previews.size >= MAX_PREVIEWS) {
     let oldestId: string | null = null;
@@ -32,25 +40,43 @@ export function storePreview(preview: SyncPreview): void {
         oldestId = id;
       }
     }
-    if (oldestId) previews.delete(oldestId);
+    if (oldestId) {
+      previews.delete(oldestId);
+      previewDirections.delete(oldestId);
+    }
   }
   previews.set(preview.previewId, preview);
+  if (direction) previewDirections.set(preview.previewId, direction);
   const ttl = Math.max(0, new Date(preview.expiresAt).getTime() - Date.now());
-  setTimeout(() => previews.delete(preview.previewId), ttl).unref?.();
+  setTimeout(() => {
+    previews.delete(preview.previewId);
+    previewDirections.delete(preview.previewId);
+  }, ttl).unref?.();
 }
 
 export function getPreview(id: string): SyncPreview | undefined {
   const p = previews.get(id);
   if (!p) return undefined;
-  if (new Date(p.expiresAt).getTime() < Date.now()) {
+  if (new Date(p.expiresAt).getTime() <= Date.now()) {
     previews.delete(id);
+    previewDirections.delete(id);
     return undefined;
   }
   return p;
 }
 
+export function getPreviewDirection(id: string): SyncDirection | undefined {
+  return previewDirections.get(id);
+}
+
+export function deletePreview(id: string): void {
+  previews.delete(id);
+  previewDirections.delete(id);
+}
+
 export function clearPreviews(): void {
   previews.clear();
+  previewDirections.clear();
 }
 
 export function revisionFrom(snapshots: FileSnapshot[], direction: SyncDirection): string {
@@ -194,6 +220,6 @@ export async function buildPreview(
   const previewId = randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS).toISOString();
   const preview: SyncPreview = { ...plan, previewId, expiresAt };
-  storePreview(preview);
+  storePreview(preview, direction);
   return preview;
 }

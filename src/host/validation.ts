@@ -3,7 +3,7 @@ import type { RemoteTarget } from './sync-types.js';
 export const HOST_RE = /^(?!-)[A-Za-z0-9._@:-]+$/;
 export const ABSOLUTE_RE = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
 export const ELIGIBLE_RE =
-  /^(?:memories\/(?!.*\.bak\.)[A-Za-z0-9._\/-]+\.md|memories\/SUGGESTIONS\.jsonl|sessions\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/session\.jsonl\.zstd)$/;
+  /^(?:memories\/(?!.*\.bak\.)[A-Za-z0-9._\/-]+\.md|memories\/SUGGESTIONS\.jsonl|sessions\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/session\.jsonl\.zstd|sessions\/[A-Za-z0-9._\/-]+\.jsonl\.zstd)$/;
 
 // Backwards-compatible aliases required by spec
 export const HOST = HOST_RE;
