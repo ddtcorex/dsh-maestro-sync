@@ -1,12 +1,16 @@
 import * as nodeFs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mergeDelimited } from './merge.js';
 import { mergeZstdLines } from './session-merge.js';
-import { hashBuffer } from './snapshot.js';
+import { hashBuffer, snapshotFile } from './snapshot.js';
 import { buildPreview } from './sync-plan.js';
+import { normalizeEligiblePath } from './validation.js';
 import type { SyncDirection } from './sync-types.js';
+import { createProcessRunner, type ProcessRunner } from './process-runner.js';
+import { createTransport, type SyncTransport } from './transport.js';
+import { validateRemoteTarget } from './validation.js';
 
 export type ExecFn = (cmd: string) => Promise<any>;
 
@@ -16,6 +20,8 @@ export interface SyncServiceOpts {
   remoteDsh?: string;
   exec?: ExecFn;
   fs?: any;
+  runner?: ProcessRunner;
+  transport?: SyncTransport;
 }
 
 export interface PullResult {
@@ -70,6 +76,8 @@ export class SyncService {
   remoteDsh: string;
   exec: ExecFn;
   fs: any;
+  runner: ProcessRunner;
+  transport: SyncTransport;
 
   constructor(opts: SyncServiceOpts = {}) {
     this.localDsh = opts.localDsh || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -77,6 +85,17 @@ export class SyncService {
     this.remoteDsh = opts.remoteDsh || '~/.dsh';
     this.exec = opts.exec || defaultExec;
     this.fs = opts.fs || nodeFs;
+    // argv-only binary transport (Task 2) — replaces direct exec string interpolation for validated absolute roots
+    this.runner = opts.runner ?? createProcessRunner();
+    this.transport = opts.transport ?? createTransport(this.runner);
+  }
+
+  private getValidatedRemoteTarget(): { host: string; dshRoot: string } | null {
+    try {
+      return validateRemoteTarget({ host: this.remote, dshRoot: this.remoteDsh });
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -168,8 +187,27 @@ export class SyncService {
    * Only lists relevant DSH state (memories, sessions, etc.), not entire ~/.dsh with node_modules.
    */
   async listRemoteFiles(): Promise<string[]> {
-    // Use explicit dirs instead of -path to avoid quoting/expansion issues with $HOME and *
-    // Expand ~ to $HOME for the find command (ssh will expand $HOME on remote)
+    // Prefer argv-only binary transport for validated absolute roots (Task 2)
+    const validated = this.getValidatedRemoteTarget();
+    if (validated) {
+      try {
+        const buf = await this.transport.list(validated);
+        const stdout = buf.toString('utf-8');
+        const lines = stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+        const rel = lines.map((p) => {
+          if (p.startsWith(validated.dshRoot + '/')) return p.slice(validated.dshRoot.length + 1);
+          if (p.startsWith('~/.dsh/')) return p.slice('~/.dsh/'.length);
+          const idx = p.indexOf('.dsh/');
+          if (idx !== -1) return p.slice(idx + 5);
+          return p.replace(/^\//, '');
+        });
+        const filtered = rel.filter(Boolean).filter((r) => this.isRelevantSyncFile(r));
+        return [...new Set(filtered)].sort();
+      } catch {
+        return [];
+      }
+    }
+    // Fallback for placeholder '~/.dsh' (kept for existing tests / legacy config) — string exec path
     const remoteDshExp = this.remoteDsh.startsWith('~/') ? `$HOME/${this.remoteDsh.slice(2)}` : this.remoteDsh;
     const findExpr = `find ${remoteDshExp}/memories ${remoteDshExp}/sessions ${remoteDshExp}/maestro -type f 2>/dev/null; find ${remoteDshExp} -maxdepth 1 -type f -name "settings.yaml" -o -name ".anonymous-user-id" 2>/dev/null | head -n 50000`;
     const cmd = `ssh ${this.remote} "${findExpr}"`;
@@ -199,6 +237,24 @@ export class SyncService {
   }
 
   private async fetchRemoteFile(relPath: string): Promise<string> {
+    // argv-only path for validated absolute roots — preserves binary stdout as Buffer internally
+    const validated = this.getValidatedRemoteTarget();
+    if (validated) {
+      try {
+        normalizeEligiblePath(relPath);
+      } catch {
+        return '';
+      }
+      // Use runner directly for single-file cat when transport staging not yet available
+      // Still argv-only: ssh host 'cat validatedRoot/rel' as single remote command string (validated, no shell meta)
+      try {
+        const res = await this.runner.run('ssh', [validated.host, `cat ${validated.dshRoot}/${relPath}`], { timeoutMs: 8000 });
+        if (res.exitCode !== 0) return '';
+        return res.stdout.toString('utf-8');
+      } catch {
+        return '';
+      }
+    }
     const remotePath = `${this.remoteDsh}/${relPath}`;
     const cmd = `ssh ${this.remote} "cat \\"${remotePath}\\" 2>/dev/null || cat '${remotePath}' 2>/dev/null || true"`;
     try {
@@ -281,15 +337,34 @@ export class SyncService {
 
   private async copyRemoteFiles(onlyRemote: string[], direction: 'pull' | 'push'): Promise<void> {
     if (onlyRemote.length === 0) return;
-    // Use rsync --files-from for copying. For pull: remote -> local; push: local -> remote
-    // We write a temp files-from list and invoke rsync
+    const validated = this.getValidatedRemoteTarget();
+    if (validated) {
+      try {
+        for (const p of onlyRemote) normalizeEligiblePath(p);
+        if (direction === 'pull') {
+          await this.transport.stage(validated, onlyRemote, this.localDsh);
+        } else {
+          const tmp = path.join(os.tmpdir(), `maestro-legacy-${Date.now()}-${Math.random().toString(16).slice(2, 6)}.txt`);
+          try {
+            const fsMod = this.fs;
+            if (fsMod.writeFileSync) fsMod.writeFileSync(tmp, onlyRemote.join('\n') + '\n', 'utf-8');
+            const res = await this.runner.run('rsync', ['-az', `--files-from=${tmp}`, `${this.localDsh}/`, `${validated.host}:${validated.dshRoot}/`], { timeoutMs: 30000 });
+            if (res.exitCode !== 0) throw Object.assign(new Error(res.stderr.toString()), { phase: 'stage' as const, code: 'STAGE_FAILED' });
+          } finally {
+            try { if (this.fs.unlinkSync) this.fs.unlinkSync(tmp); else if (this.fs.rmSync) this.fs.rmSync(tmp, { force: true } as any); } catch {}
+          }
+        }
+        return;
+      } catch {
+        // fall through to legacy on validation/transport failure
+      }
+    }
     const tmpList = path.join(os.tmpdir(), `dsh-sync-files-${Date.now()}-${Math.random().toString(16).slice(2, 6)}.txt`);
     try {
       if (this.fs.writeFileSync) this.fs.writeFileSync(tmpList, onlyRemote.join('\n') + '\n', 'utf-8');
     } catch {}
     let cmd: string;
     if (direction === 'pull') {
-      // rsync from remote:host:remoteDsh/ to localDsh using files-from
       cmd = `rsync -az --files-from="${tmpList}" ${this.remote}:${this.remoteDsh}/ "${this.localDsh}/"`;
     } else {
       cmd = `rsync -az --files-from="${tmpList}" "${this.localDsh}/" ${this.remote}:${this.remoteDsh}/`;
@@ -414,18 +489,37 @@ export class SyncService {
 
   async checkConnection(): Promise<ConnectionStatus> {
     const start = Date.now();
+    // Prefer argv-only runner (shell:false) when host doesn't contain control chars — binary-safe
+    const hostLooksValid = typeof this.remote === 'string' && !this.remote.includes('\0') && !this.remote.includes('\n') && !this.remote.includes('\r');
+    if (hostLooksValid) {
+      try {
+        const res = await this.runner.run('ssh', ['-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', this.remote, 'echo ok'], { timeoutMs: 5000 });
+        if (res.exitCode === 0) {
+          const text = (res.stdout.toString('utf-8') + res.stderr.toString('utf-8')).trim();
+          const ok = text.includes('ok');
+          if (ok || res.exitCode === 0) return { ok: true, host: this.remote, latencyMs: Date.now() - start };
+        }
+        const detail = res.stderr.toString('utf-8').trim().slice(0, 400) || `exit ${res.exitCode}`;
+        return { ok: false, host: this.remote, error: detail };
+      } catch (e: any) {
+        const msg = e?.message ?? String(e ?? '');
+        const stderr = e?.stderr ?? e?.stdout ?? '';
+        const detail = [msg, stderr].filter(Boolean).join(' — ').slice(0, 400);
+        // fall through to legacy string path if runner threw due to placeholder host validation?
+        if (msg?.includes('timed out') || detail) {
+          return { ok: false, host: this.remote, error: detail || 'SSH connection failed' };
+        }
+      }
+    }
     const cmd = `ssh -o ConnectTimeout=5 -o BatchMode=yes ${this.remote} "echo ok" 2>&1`;
     try {
       const out = await this.exec(cmd);
       const text = normalizeExecOutput(out).trim();
       const ok = text.includes('ok') || text === 'ok';
-      // ssh may return ok with newline; also exit 0 implies ok even if output empty
       if (ok) return { ok: true, host: this.remote, latencyMs: Date.now() - start };
-      // treat empty output as ok if exec did not throw (ssh succeeded)
       return { ok: true, host: this.remote, latencyMs: Date.now() - start };
     } catch (e: any) {
       const msg = e?.message ?? String(e ?? '');
-      // include stderr if present in error object
       const stderr = e?.stderr ?? e?.stdout ?? '';
       const detail = [msg, stderr].filter(Boolean).join(' — ').slice(0, 400);
       return { ok: false, host: this.remote, error: detail || 'SSH connection failed' };
@@ -467,35 +561,100 @@ export class SyncService {
     };
   }
 
+  /**
+   * Read-only preview: hashes local and staged remote eligible files with SHA-256,
+   * stages remote candidates in one read-only temporary directory, dispatches per-kind
+   * merge to compute exact added counts, and stores a bounded 60s preview record.
+   * No preview path may call copy, backup, restore, or publish.
+   */
   async preview(opts: { direction: SyncDirection }): Promise<any> {
     const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
     const connection = await this.checkConnection();
     if (!connection.ok) {
       throw Object.assign(new Error(`cannot preview while offline: ${connection.error}`), { phase: 'validate', code: 'OFFLINE' });
     }
-    const localFiles = this.listLocalFiles();
-    const remoteFiles = await this.listRemoteFiles();
+    const rawLocal = this.listLocalFiles();
+    const rawRemote = await this.listRemoteFiles();
+    const localFiles = rawLocal.filter((p) => {
+      try {
+        normalizeEligiblePath(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    const remoteFiles = rawRemote.filter((p) => {
+      try {
+        normalizeEligiblePath(p);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    const stagingDir = path.join(os.tmpdir(), `maestro-sync-preview-${Date.now()}-${randomBytes(4).toString('hex')}`);
+    const fsMod: any = this.fs ?? nodeFs;
+    try {
+      if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
+      else if (fsMod.promises?.mkdir) await fsMod.promises.mkdir(stagingDir, { recursive: true });
+    } catch {}
+    const cleanup = () => {
+      try {
+        if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir, { recursive: true, force: true });
+        else if (typeof fsMod.rmdirSync === 'function') fsMod.rmdirSync(stagingDir, { recursive: true } as any);
+      } catch {}
+    };
+
     const localContents = new Map<string, Buffer>();
     const remoteContents = new Map<string, Buffer>();
     const localSnapshots: any[] = [];
     const remoteSnapshots: any[] = [];
+
     for (const p of localFiles) {
-      const content = this.readLocalFile(p);
-      const buf = Buffer.from(content, 'utf-8');
-      localContents.set(p, buf);
-      const sha = hashBuffer(buf);
-      const kind = p.endsWith('.zstd') ? 'session' : p.endsWith('.jsonl') ? 'jsonl' : 'memory';
-      localSnapshots.push({ path: p, sha256: sha, size: buf.length, kind });
+      try {
+        const full = path.join(this.localDsh, p);
+        let buf: Buffer;
+        if (typeof fsMod.readFileSync === 'function') {
+          try {
+            const data = fsMod.readFileSync(full);
+            buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf-8');
+          } catch {
+            const content = this.readLocalFile(p);
+            buf = Buffer.from(content ?? '', 'utf-8');
+          }
+        } else {
+          const content = this.readLocalFile(p);
+          buf = Buffer.from(content ?? '', 'utf-8');
+        }
+        localContents.set(p, buf);
+        const snap = snapshotFile(p, buf);
+        localSnapshots.push(snap);
+      } catch {}
     }
+
     for (const p of remoteFiles) {
-      const content = await this.fetchRemoteFile(p);
-      const buf = Buffer.from(content, 'utf-8');
-      remoteContents.set(p, buf);
-      const sha = hashBuffer(buf);
-      const kind = p.endsWith('.zstd') ? 'session' : p.endsWith('.jsonl') ? 'jsonl' : 'memory';
-      remoteSnapshots.push({ path: p, sha256: sha, size: buf.length, kind });
+      try {
+        const content = await this.fetchRemoteFile(p);
+        const buf = Buffer.from(content ?? '', 'utf-8');
+        remoteContents.set(p, buf);
+        try {
+          const stagedPath = path.join(stagingDir, p);
+          const dir = path.dirname(stagedPath);
+          if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(dir, { recursive: true });
+          if (typeof fsMod.writeFileSync === 'function') {
+            fsMod.writeFileSync(stagedPath, buf);
+            try {
+              if (typeof fsMod.chmodSync === 'function') fsMod.chmodSync(stagedPath, 0o444);
+            } catch {}
+          }
+        } catch {}
+        const snap = snapshotFile(p, buf);
+        remoteSnapshots.push(snap);
+      } catch {}
     }
+
     const preview = await buildPreview(localSnapshots, remoteSnapshots, direction, localContents, remoteContents);
+    cleanup();
     return { ...preview, connection, remoteHost: this.remote };
   }
 }

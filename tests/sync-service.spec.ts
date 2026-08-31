@@ -67,6 +67,7 @@ describe('SyncService', () => {
       if (String(cmd).includes('find')) {
         return 'memories/a.md\nmemories/b.md\n';
       }
+      if (String(cmd).includes('echo ok')) return 'ok';
       return '';
     });
     const svc = new SyncService({
@@ -75,6 +76,7 @@ describe('SyncService', () => {
       remoteDsh: '~/.dsh',
       exec: exec as any,
     });
+    vi.spyOn(svc, 'checkConnection').mockResolvedValue({ ok: true, host: 'host', latencyMs: 1 } as any);
     vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/a.md', 'memories/c.md']);
     vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/a.md', 'memories/b.md']);
 
