@@ -8,6 +8,68 @@ export const inject = ['slots', 'connection'] as const
 
 const RPC_CHANNEL = '/dsh-maestro-sync'
 
+// Shared Maestro mark — same as dsh-maestro-config / dashboard BrandMark
+// Path: M2 11 L5 4 L8 9 L11 4 L14 11 stroke 1.6 — keep in sync per AGENTS.md Branding
+const SETTINGS_NAV_MARKER = 'data-maestro-sync-settings-nav'
+const SETTINGS_NAV_CSS = `
+/* sync: replace the settings-nav fallback gear with the Maestro M-logo glyph — same mark as Maestro */
+[${SETTINGS_NAV_MARKER}] > svg:first-child,
+[${SETTINGS_NAV_MARKER}] > svg.zWKi1a_navIcon {
+  display: none !important;
+}
+[${SETTINGS_NAV_MARKER}]::before {
+  content: '';
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 11 L5 4 L8 9 L11 4 L14 11'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 11 L5 4 L8 9 L11 4 L14 11'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+`
+
+function registerSyncNavIcon(label: () => string, root?: any): () => void {
+  if (typeof document === 'undefined' && root === undefined) return () => {}
+  const scope: any = root ?? document
+  let disposed = false
+  const sync = () => {
+    if (disposed) return
+    const currentLabel = label().trim()
+    const buttons = scope.querySelectorAll('[role="dialog"] nav button')
+    for (const button of Array.from(buttons as any) as Element[]) {
+      const el = button as any
+      const matches = currentLabel.length > 0 && (button as Element).textContent != null && (button as Element).textContent!.trim() === currentLabel
+      if (matches) el.setAttribute(SETTINGS_NAV_MARKER, '')
+      else el.removeAttribute(SETTINGS_NAV_MARKER)
+    }
+  }
+  sync()
+  let observer: MutationObserver | null = null
+  if (typeof MutationObserver !== 'undefined') {
+    observer = new MutationObserver(sync)
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+  }
+  return () => {
+    disposed = true
+    if (observer !== null) observer.disconnect()
+    for (const element of Array.from(scope.querySelectorAll(`[${SETTINGS_NAV_MARKER}]`) as any)) {
+      ;(element as any).removeAttribute(SETTINGS_NAV_MARKER)
+    }
+  }
+}
+
+function installSyncNavIconStyle(): () => void {
+  const tag = document.createElement('style')
+  tag.dataset.plugin = '@ddtcorex/dsh-maestro-sync'
+  tag.dataset.pluginCss = 'maestro-sync/settings-nav.css'
+  tag.textContent = SETTINGS_NAV_CSS
+  document.head.appendChild(tag)
+  return () => {
+    document.querySelector('style[data-plugin-css="maestro-sync/settings-nav.css"]')?.remove()
+  }
+}
+
 const SYNC_CSS = `
 .sync-card { border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:var(--dsw-alias-bg-layer-1); padding:16px; display:flex; flex-direction:column; gap:14px; }
 .sync-header { display:flex; align-items:center; gap:10px; }
@@ -192,13 +254,26 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
 
   return React.createElement('div', { className: 'sync-card' },
     React.createElement('style', null, SYNC_CSS),
-    React.createElement('div', { className: 'sync-header' },
+    React.createElement('div', { className: 'sync-header', style: { alignItems: 'flex-start' } as any },
+      React.createElement('span', {
+        'data-maestro-logo': '',
+        style: {
+          width: 28, height: 28, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+          background: 'var(--dsw-alias-brand-primary, #0A84FF)', backgroundColor: '#0A84FF', color: '#fff', flex: 'none',
+          border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 0 0 1px var(--dsw-alias-border-l1)', boxSizing: 'border-box' as any, marginTop: 2,
+        },
+      } as any,
+        React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' } as any,
+          React.createElement('path', { d: 'M2 11 L5 4 L8 9 L11 4 L14 11', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round' } as any)
+        )
+      ),
       React.createElement('div', { style: { flex: '1 1 auto', minWidth: 0 } },
         React.createElement('div', { className: 'sync-title' }, 'Maestro Sync'),
         React.createElement('div', { className: 'sync-subtitle' }, summary),
       ),
-      React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy || checking, 'aria-label': 'Refresh status' }, checking ? 'Checking…' : 'Refresh'),
+      React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy || checking, 'aria-label': 'Refresh status', style: { marginTop: 2 } as any }, checking ? 'Checking…' : 'Refresh'),
     ),
+    React.createElement('style', null, '[data-maestro-logo]{background:#0A84FF !important; background-color:#0A84FF !important; color:#fff !important;}'),
     // Connection banner — prerequisite for all sync actions
     React.createElement('div', { className: `sync-conn ${isDisconnected ? 'sync-conn-bad' : 'sync-conn-ok'}` },
       React.createElement('div', { className: `sync-conn-dot ${checking ? 'sync-conn-dot-checking' : isConnected ? 'sync-conn-dot-ok' : isDisconnected ? 'sync-conn-dot-bad' : 'sync-conn-dot-checking'}` }),
@@ -316,6 +391,9 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
 export function apply(ctx: any): void {
   const slots = (ctx as any).slots ?? (ctx as any).get?.('slots')
   if (!slots?.inject || !slots?.register) return
+  // Shared Maestro nav icon — same M-logo as Maestro tab (BrandMark)
+  ctx.effect(() => registerSyncNavIcon(() => 'Maestro Sync'), 'maestro-sync: settings nav icon')
+  ctx.effect(installSyncNavIconStyle, 'maestro-sync: settings nav css')
   ctx.effect(() => {
     const dispose = slots.inject('settings.section', () =>
       slots.register({ name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' }, () => React.createElement(SyncPanel, { ctx })),
