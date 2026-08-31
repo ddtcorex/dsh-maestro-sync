@@ -158,6 +158,23 @@ function formatFile(path: string): { icon: string; title: string; path: string; 
   return { icon: '📄', title: path.split('/').pop() ?? path, path, meta: path.split('/')[0] ?? '' }
 }
 
+function sortForDisplay(files: string[]): string[] {
+  const score = (p: string) => {
+    if (p.startsWith('sessions/')) return 0
+    if (p.startsWith('memories/daily/')) return 1
+    if (p.startsWith('memories/projects/')) return 2
+    if (p === 'memories/MEMORY.md') return 2
+    if (p.startsWith('memories/')) return 3
+    if (p.startsWith('maestro/')) return 4
+    return 5
+  }
+  return [...files].sort((a, b) => {
+    const sa = score(a), sb = score(b)
+    if (sa !== sb) return sa - sb
+    return a.localeCompare(b)
+  })
+}
+
 function humanSummary(status: any): string {
   if (!status) return 'Checking what needs to be synced…'
   const { localOnly = 0, remoteOnly = 0, both = 0 } = status
@@ -336,7 +353,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
         ? React.createElement('div', { className: 'sync-empty' }, `Cannot check remote — SSH to ${connection!.host} is not connected. Fix SSH then Refresh.`)
         : (status.remoteOnlyFiles?.length ?? 0) === 0
           ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no new files.')
-        : (status.remoteOnlyFiles ?? []).slice(0, 5).map((p: string) => {
+        : sortForDisplay(status.remoteOnlyFiles as string[]).slice(0, 8).map((p: string) => {
             const f = formatFile(p)
             return React.createElement('div', { key: p, className: 'sync-file' },
               React.createElement('div', { className: 'sync-file-icon' }, f.icon),
@@ -347,7 +364,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
               React.createElement('div', { className: 'sync-file-meta' }, f.meta),
             )
           }),
-      !isDisconnected && (status.remoteOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 5} more`) : null,
+      !isDisconnected && (status.remoteOnlyFiles?.length ?? 0) > 8 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 8} more · sessions first, then daily notes`) : null,
     ) : null,
     status ? React.createElement('div', { className: 'sync-section' },
       React.createElement('div', { className: 'sync-section-head' },
@@ -356,7 +373,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
       ),
       (status.localOnlyFiles?.length ?? 0) === 0
         ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to push — this machine has no new files.')
-        : (status.localOnlyFiles ?? []).slice(0, 5).map((p: string) => {
+        : sortForDisplay(status.localOnlyFiles as string[]).slice(0, 8).map((p: string) => {
             const f = formatFile(p)
             return React.createElement('div', { key: p, className: 'sync-file' },
               React.createElement('div', { className: 'sync-file-icon' }, f.icon),
@@ -367,7 +384,7 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
               React.createElement('div', { className: 'sync-file-meta' }, f.meta),
             )
           }),
-      (status.localOnlyFiles?.length ?? 0) > 5 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.localOnlyFiles.length - 5} more`) : null,
+      (status.localOnlyFiles?.length ?? 0) > 8 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.localOnlyFiles.length - 8} more · sessions first`) : null,
     ) : null,
     error ? React.createElement('div', { className: 'sync-result sync-result-error' },
       React.createElement('div', { className: 'sync-result-title' }, 'Something went wrong'),
