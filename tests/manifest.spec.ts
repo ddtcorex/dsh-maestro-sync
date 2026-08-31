@@ -24,4 +24,11 @@ describe('manifest', () => {
     expect(y).toMatch(/id:\s*dsh-maestro-sync/);
     expect(y).toMatch(/channel:\s*\/dsh-maestro-sync/);
   });
+  it('ships the host and client bundles required by the web profile', () => {
+    const fs = require('node:fs');
+    expect(fs.existsSync('lib/index.js')).toBe(true);
+    expect(fs.existsSync('lib/client.js')).toBe(true);
+    expect(fs.statSync('lib/index.js').size).toBeGreaterThan(1000);
+    expect(fs.statSync('lib/client.js').size).toBeGreaterThan(1000);
+  });
 });
