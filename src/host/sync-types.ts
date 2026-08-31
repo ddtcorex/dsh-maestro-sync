@@ -28,3 +28,30 @@ export interface SyncSummary {
   conflicts: number;
   added: number;
 }
+
+export interface FileSnapshot {
+  path: string;
+  sha256: string;
+  size: number;
+  kind: 'memory' | 'jsonl' | 'session';
+}
+
+export interface PlannedAction {
+  path: string;
+  action: 'copy' | 'merge' | 'skip' | 'conflict';
+  target: 'local' | 'remote';
+  added: number;
+  reason: string;
+  expectedTargetSha256?: string;
+}
+
+export interface SyncPlan {
+  revision: string;
+  actions: PlannedAction[];
+  summary: SyncSummary;
+}
+
+export interface SyncPreview extends SyncPlan {
+  previewId: string;
+  expiresAt: string;
+}
