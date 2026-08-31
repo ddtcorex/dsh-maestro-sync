@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { FileSnapshot, PlannedAction, SyncPlan, SyncPreview, SyncSummary, SyncDirection } from './sync-types.js';
 import { mergeDelimited } from './merge.js';
-import { mergeZstdLines } from './session-merge.js';
+import { isSameSession, mergeSessionBuffers } from './session-plan.js';
 
 export const PREVIEW_TTL_MS = 60_000;
 export const MAX_PREVIEWS = 50;
@@ -150,12 +150,22 @@ export async function buildPlan(
           merged++;
           added += addedCount;
         } else if (p.endsWith('.zstd')) {
-          const localStr = localBuf.toString('utf-8');
-          const remoteStr = remoteBuf.toString('utf-8');
-          const { added: addedCount } = direction === 'pull' ? mergeZstdLines(localStr, remoteStr) : mergeZstdLines(remoteStr, localStr);
-          actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'session differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
-          merged++;
-          added += addedCount;
+          // Session handling is Buffer/path-only and preserves DSH standalone checksummed Zstd header frame.
+          // Never convert Zstd bytes to UTF-8 string; use validated Zstd artifact API via session-plan.
+          try {
+            if (!isSameSession(localBuf, remoteBuf)) {
+              actions.push({ path: p, action: 'conflict', target, added: 0, reason: 'session header mismatch', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+              conflicts++;
+            } else {
+              const { added: addedCount } = direction === 'pull' ? mergeSessionBuffers(localBuf, remoteBuf) : mergeSessionBuffers(remoteBuf, localBuf);
+              actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'session differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+              merged++;
+              added += addedCount;
+            }
+          } catch (e: any) {
+            actions.push({ path: p, action: 'conflict', target, added: 0, reason: e?.message ?? 'session merge failed', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+            conflicts++;
+          }
         } else {
           actions.push({ path: p, action: 'conflict', target, added: 0, reason: 'unknown kind', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
           conflicts++;
