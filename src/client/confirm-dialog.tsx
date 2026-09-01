@@ -21,7 +21,12 @@ export function ConfirmDialog(props: {
   const actions = (preview?.actions ?? []).slice(0, actionLimit)
   const hasMore = (preview?.actions?.length ?? 0) > actionLimit
   const summary = preview?.summary ?? {}
+  const sessionCounts = preview?.sessionCounts
   const previewId = String(preview?.previewId ?? '').slice(0, 8)
+
+  const sessionLine = sessionCounts
+    ? `${sessionCounts.added ?? 0} added · ${sessionCounts.updated ?? 0} updated · ${sessionCounts.deleted ?? 0} deleted · ${sessionCounts.identical ?? 0} identical`
+    : null
 
   return (
     <div data-sync-dialog-overlay="" data-testid="sync-dialog-overlay">
@@ -41,6 +46,15 @@ export function ConfirmDialog(props: {
         </div>
 
         <div data-sync-planlist="">
+          {sessionLine ? (
+            <div data-sync-sessioncounts="" data-testid="sync-session-counts">
+              <span data-sync-sessioncounts-lbl="">
+                <Icon name="swap" />
+                Sessions (counted by checksum)
+              </span>
+              <span data-sync-sessioncounts-line="">{sessionLine}</span>
+            </div>
+          ) : null}
           {actions.length === 0 ? (
             <div data-sync-empty="">Nothing to do — every file is already in sync.</div>
           ) : (

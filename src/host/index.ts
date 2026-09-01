@@ -4,11 +4,21 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { SyncService } from './sync-service.js';
 import { loadSyncConfig } from './config.js';
+import type { PreviewJobState } from './sync-types.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
+
+// Async preview jobs: the UI polls previewStatus while the service hashes
+// sessions over ssh (count-only). Job state is process-local; the exact
+// preview is persisted to the sidecar store by the service itself, so a job
+// state loss on restart only loses the in-flight progress, never a preview.
+const previewJobs = new Map<string, PreviewJobState>();
+const MAX_PREVIEW_JOBS = 8;
+const PREVIEW_JOB_IDLE_MS = 120_000;
 
 // Carrier helpers — dsh-client-connection decodes every RPC response as
 // { ok: true, value } | { ok: false, error: { code, message, details } }
@@ -247,7 +257,65 @@ export default {
               case 'preview': {
                 const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
                 const r = await svc.preview({ direction: dir });
-                return okCarrier({ previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, connection: r.connection, remoteHost: r.remoteHost });
+                return okCarrier({ previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, sessionCounts: r.sessionCounts, connection: r.connection, remoteHost: r.remoteHost });
+              }
+              case 'previewStart': {
+                // Count-only sessions (no content staged) + per-file progress;
+                // returns a jobId immediately, the UI polls previewStatus.
+                const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
+                const jobId = randomBytes(8).toString('hex');
+                const state: PreviewJobState = { status: 'running', progress: { phase: 'listing', current: 0, total: 1 } };
+                (state as any).ts = Date.now();
+                previewJobs.set(jobId, state);
+                if (previewJobs.size > MAX_PREVIEW_JOBS) {
+                  const oldest = [...previewJobs.entries()].sort((a, b) => ((a[1] as any).ts ?? 0) - ((b[1] as any).ts ?? 0))[0];
+                  if (oldest) previewJobs.delete(oldest[0]);
+                }
+                void (async () => {
+                  try {
+                    const r = await svc.preview({
+                      direction: dir,
+                      sessionsCountOnly: true,
+                      onProgress: (p) => {
+                        const s = previewJobs.get(jobId);
+                        if (s) {
+                          s.progress = p;
+                          (s as any).ts = Date.now();
+                        }
+                      },
+                    });
+                    const s = previewJobs.get(jobId);
+                    if (s) {
+                      s.status = 'done';
+                      s.preview = { previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, sessionCounts: r.sessionCounts, connection: (r as any).connection, remoteHost: (r as any).remoteHost } as any;
+                      (s as any).ts = Date.now();
+                    }
+                  } catch (e: any) {
+                    const s = previewJobs.get(jobId);
+                    if (s) {
+                      s.status = 'error';
+                      s.error = e?.message ?? String(e);
+                      (s as any).ts = Date.now();
+                    }
+                  }
+                })();
+                return okCarrier({ jobId, status: 'running' });
+              }
+              case 'previewStatus': {
+                const jobId = args && (args as any).jobId;
+                if (!jobId || typeof jobId !== 'string' || !previewJobs.has(jobId)) return failCarrier('preview job not found', 'maestro-sync/preview-job');
+                const s = previewJobs.get(jobId)!;
+                const idleMs = Date.now() - ((s as any).ts ?? Date.now());
+                if (idleMs > PREVIEW_JOB_IDLE_MS) {
+                  previewJobs.delete(jobId);
+                  return failCarrier('preview job expired', 'maestro-sync/preview-job');
+                }
+                return okCarrier({
+                  status: s.status,
+                  progress: s.progress,
+                  preview: s.preview,
+                  error: s.error,
+                });
               }
               case 'apply': {
                 const previewId = args && (args as any).previewId;

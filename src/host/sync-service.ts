@@ -23,7 +23,7 @@ import { mergeSessionBuffers } from './session-plan.js';
 import { snapshotFile } from './snapshot.js';
 import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview, storePreview } from './sync-plan.js';
 import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
-import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction } from './sync-types.js';
+import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction, SyncProgress } from './sync-types.js';
 import { createProcessRunner, type ProcessRunner } from './process-runner.js';
 import { createTransport, type SyncTransport } from './transport.js';
 
@@ -273,8 +273,11 @@ export class SyncService {
   /**
    * Hash local files and stage the remote eligible files once (argv-only rsync
    * --files-from, raw Buffers preserved). Session artifacts stay binary-exact.
+   * When `sessionsCountOnly` is set, session files are NOT staged: their remote
+   * sha256+size are fetched over one ssh (`sha256sum`, streaming per file) so
+   * preview can count added/updated/deleted without transferring content.
    */
-  private async snapshotBoth(): Promise<{
+  private async snapshotBoth(opts: { sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void } = {}): Promise<{
     target: RemoteTarget;
     localSnapshots: FileSnapshot[];
     remoteSnapshots: FileSnapshot[];
@@ -282,6 +285,8 @@ export class SyncService {
     remoteContents: Map<string, Buffer>;
     cleanup: () => void;
   }> {
+    const progress = (phase: SyncProgress['phase'], current: number, total: number, file?: string) => opts.onProgress?.({ phase, current, total, file });
+    const isSession = (p: string) => p.endsWith('.jsonl.zstd');
     const target = await this.requireTarget();
     const localPaths = this.listLocalFiles();
     const rawRemote = await this.transport.list(target);
@@ -312,41 +317,63 @@ export class SyncService {
         throw syncFailure('snapshot', 'COMPARE_FAILED', `remote compare failed: ${e?.message ?? String(e)}`);
       }
       if (changed.length > 0) {
-        stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
-        const fsMod = this.fs;
-        try {
-          if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
-          else nodeFs.mkdirSync(stagingDir, { recursive: true });
-        } catch (e: any) {
-          throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
-        }
-        cleanup = () => {
-          try {
-            if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
-            else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
-          } catch {}
-        };
-        try {
-          await this.transport.stage(target, changed, stagingDir);
-        } catch (e: any) {
-          throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
-        }
-        for (const p of changed) {
-          const stagedPath = path.join(stagingDir, p);
-          const fsMod2 = this.fs;
-          let data: Buffer;
-          try {
-            if (typeof fsMod2.readFileSync === 'function') {
-              const d = fsMod2.readFileSync(stagedPath);
-              data = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
-            } else {
-              data = nodeFs.readFileSync(stagedPath);
-            }
-          } catch (e: any) {
-            throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
+        const isSessionLocal = isSession;
+        const sessionChanged = opts.sessionsCountOnly ? changed.filter(isSessionLocal) : [];
+        const stageChanged = opts.sessionsCountOnly ? changed.filter((p) => !isSessionLocal(p)) : changed;
+
+        // Count-only sessions: fetch remote sha256+size over one streaming ssh
+        // (as fast as a checksum pass, no byte transfer) and emit a progress tick
+        // per file. Never read into remoteContents — preview only counts them.
+        if (sessionChanged.length > 0) {
+          let hashed = 0;
+          progress('hashing', 0, sessionChanged.length);
+          const hashes = await this.transport.hashes(target, sessionChanged, (h) => {
+            hashed++;
+            progress('hashing', hashed, sessionChanged.length, h.path);
+          });
+          for (const h of hashes) {
+            remoteSnapshots.push({ path: h.path, sha256: h.sha256, size: h.size, kind: 'session' });
           }
-          remoteContents.set(p, data);
-          remoteSnapshots.push(snapshotFile(p, data));
+        }
+
+        if (stageChanged.length > 0) {
+          stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
+          const fsMod = this.fs;
+          try {
+            if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
+            else nodeFs.mkdirSync(stagingDir, { recursive: true });
+          } catch (e: any) {
+            throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
+          }
+          cleanup = () => {
+            try {
+              if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
+              else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
+            } catch {}
+          };
+          progress('staging', 0, stageChanged.length);
+          try {
+            await this.transport.stage(target, stageChanged, stagingDir);
+          } catch (e: any) {
+            throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
+          }
+          for (const p of stageChanged) {
+            const stagedPath = path.join(stagingDir, p);
+            const fsMod2 = this.fs;
+            let data: Buffer;
+            try {
+              if (typeof fsMod2.readFileSync === 'function') {
+                const d = fsMod2.readFileSync(stagedPath);
+                data = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
+              } else {
+                data = nodeFs.readFileSync(stagedPath);
+              }
+            } catch (e: any) {
+              throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
+            }
+            remoteContents.set(p, data);
+            remoteSnapshots.push(snapshotFile(p, data));
+          }
         }
       }
       // Files the checksum compare proved byte-identical are represented by the
@@ -355,10 +382,19 @@ export class SyncService {
       for (const p of remotePaths) {
         if (remoteContents.has(p)) continue;
         const localBuf = localContents.get(p);
-        if (localBuf) {
-          remoteContents.set(p, localBuf);
-          remoteSnapshots.push(snapshotFile(p, localBuf));
+        if (!localBuf) continue;
+        if (opts.sessionsCountOnly && isSession(p)) {
+          // identical sessions keep their snapshot so the count-only preview
+          // revision matches the apply re-inventory (sha == local bytes);
+          // changed sessions were already snapshotted by hashes — never let a
+          // local fill overwrite them; never load content (counted, not merged).
+          if (!remoteSnapshots.some((s) => s.path === p)) {
+            remoteSnapshots.push(snapshotFile(p, localBuf));
+          }
+          continue;
         }
+        remoteContents.set(p, localBuf);
+        remoteSnapshots.push(snapshotFile(p, localBuf));
       }
     }
     return { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup };
@@ -366,16 +402,24 @@ export class SyncService {
 
   /**
    * Read-only preview: exact plan with copy/merge/skip/conflict and real added
-   * counts. No preview path may copy, backup, restore or publish.
+   * counts — except sessions under `sessionsCountOnly`, which are counted by
+   * path+checksum (added/updated/deleted/identical) without staging content.
+   * `onProgress` receives per-phase ticks (hashing emits one per session file).
+   * No preview path may copy, backup, restore or publish.
    */
-  async preview(opts: { direction: SyncDirection }): Promise<PreviewResult> {
+  async preview(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void }): Promise<PreviewResult> {
     const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
     const connection = await this.requireConnection();
-    const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth();
+    const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth({
+      sessionsCountOnly: opts.sessionsCountOnly,
+      onProgress: opts.onProgress,
+    });
     try {
-      const preview = await buildPreview(localSnapshots, remoteSnapshots, direction, localContents, remoteContents);
+      opts.onProgress?.({ phase: 'planning', current: 0, total: 1 });
+      const preview = await buildPreview(localSnapshots, remoteSnapshots, direction, localContents, remoteContents, { countOnlySessions: opts.sessionsCountOnly });
       // persist so a separate CLI apply process can consume this preview
       storePreview(preview, direction, this.previewDir);
+      opts.onProgress?.({ phase: 'planning', current: 1, total: 1 });
       return { ...preview, connection, remoteHost: this.remote };
     } finally {
       cleanup();

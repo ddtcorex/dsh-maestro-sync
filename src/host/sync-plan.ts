@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import type { FileSnapshot, PlannedAction, SyncPlan, SyncPreview, SyncSummary, SyncDirection } from './sync-types.js';
+import type { FileSnapshot, PlannedAction, SyncPlan, SyncPreview, SyncSummary, SyncDirection, SessionCounts } from './sync-types.js';
 import { mergeDelimited } from './merge.js';
 import { isSameSession, mergeSessionBuffers } from './session-plan.js';
 
@@ -210,6 +210,7 @@ export async function buildPlan(
   direction: SyncDirection,
   localContents: Map<string, Buffer>,
   remoteContents: Map<string, Buffer>,
+  opts: { countOnlySessions?: boolean } = {},
 ): Promise<SyncPlan> {
   const localMap = new Map(localSnapshots.map((s) => [s.path, s]));
   const remoteMap = new Map(remoteSnapshots.map((s) => [s.path, s]));
@@ -222,12 +223,33 @@ export async function buildPlan(
   let conflicts = 0;
   let added = 0;
 
+  // Count-only sessions: preview reports added/updated/deleted/identical from
+  // path+checksum without staging content. These files never produce action
+  // rows — the UI shows the counts instead of per-file rows. Apply is untouched:
+  // it re-inventories with full content and builds a real merge plan.
+  let sessionCounts: SessionCounts = { added: 0, updated: 0, deleted: 0, identical: 0 };
+  const isSession = (p: string) => p.endsWith('.zstd');
+
   const sortedPaths = [...allPaths].sort((a, b) => a.localeCompare(b));
 
   for (const p of sortedPaths) {
     const ls = localMap.get(p);
     const rs = remoteMap.get(p);
     const target: 'local' | 'remote' = direction === 'pull' ? 'local' : 'remote';
+
+    if (opts.countOnlySessions && isSession(p)) {
+      if (!ls && rs) {
+        if (direction === 'pull') sessionCounts.added++;
+        else sessionCounts.deleted++;
+      } else if (ls && !rs) {
+        if (direction === 'pull') sessionCounts.deleted++;
+        else sessionCounts.added++;
+      } else if (ls && rs) {
+        if (ls.sha256 === rs.sha256) sessionCounts.identical++;
+        else sessionCounts.updated++;
+      }
+      continue;
+    }
 
     if (ls && !rs) {
       if (direction === 'push') {
@@ -324,7 +346,7 @@ export async function buildPlan(
   const revision = revisionFrom([...localSnapshots, ...remoteSnapshots], direction);
   const summary: SyncSummary = { copied, merged, skipped, conflicts, added };
   actions.sort((a, b) => a.path.localeCompare(b.path));
-  return { revision, actions, summary };
+  return { revision, actions, summary, sessionCounts: opts.countOnlySessions ? sessionCounts : undefined };
 }
 
 export async function buildPreview(
@@ -333,8 +355,9 @@ export async function buildPreview(
   direction: SyncDirection,
   localContents: Map<string, Buffer>,
   remoteContents: Map<string, Buffer>,
+  opts: { countOnlySessions?: boolean } = {},
 ): Promise<SyncPreview> {
-  const plan = await buildPlan(localSnapshots, remoteSnapshots, direction, localContents, remoteContents);
+  const plan = await buildPlan(localSnapshots, remoteSnapshots, direction, localContents, remoteContents, opts);
   const previewId = randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + PREVIEW_TTL_MS).toISOString();
   const preview: SyncPreview = { ...plan, previewId, expiresAt };
