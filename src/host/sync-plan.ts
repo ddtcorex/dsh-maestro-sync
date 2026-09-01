@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
 import type { FileSnapshot, PlannedAction, SyncPlan, SyncPreview, SyncSummary, SyncDirection } from './sync-types.js';
 import { mergeDelimited } from './merge.js';
 import { isSameSession, mergeSessionBuffers } from './session-plan.js';
@@ -8,6 +10,21 @@ export const MAX_PREVIEWS = 50;
 
 const previews = new Map<string, SyncPreview>();
 const previewDirections = new Map<string, SyncDirection>();
+
+function previewFile(id: string, dir: string): string {
+  return path.join(dir, `${id}.json`);
+}
+
+/** Read a persisted preview record (null when missing/corrupt). */
+function readPersisted(id: string, dir: string): { preview: SyncPreview; direction?: SyncDirection } | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(previewFile(id, dir), 'utf-8')) as { preview?: SyncPreview; direction?: SyncDirection };
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.preview?.previewId !== 'string') return null;
+    return { preview: parsed.preview, direction: parsed.direction };
+  } catch {
+    return null;
+  }
+}
 
 function pruneExpired(): void {
   const now = Date.now();
@@ -28,7 +45,70 @@ function pruneExpired(): void {
   }
 }
 
-export function storePreview(preview: SyncPreview, direction?: SyncDirection): void {
+/**
+ * Persist a preview to disk so a later process (a separate CLI apply) can
+ * consume it. The file mirrors the in-memory record; the TTL is enforced on
+ * read. Sidecar only — a plain operational folder under DSH_HOME, never part
+ * of the eligible sync data.
+ */
+export function persistPreview(preview: SyncPreview, direction?: SyncDirection, dir?: string): string {
+  if (!dir) return '';
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const now = Date.now();
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+    } catch {
+      files = [];
+    }
+    // purge expired records, then cap at MAX_PREVIEWS (oldest first)
+    const keep: string[] = [];
+    for (const f of files) {
+      if (f === `${preview.previewId}.json`) continue;
+      const record = readPersisted(f.slice(0, -5), dir);
+      if (record && new Date(record.preview.expiresAt).getTime() > now) keep.push(f);
+      else {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {}
+      }
+    }
+    keep.sort();
+    while (keep.length >= MAX_PREVIEWS) {
+      const old = keep.shift()!;
+      try {
+        fs.unlinkSync(path.join(dir, old));
+      } catch {}
+    }
+    const target = previewFile(preview.previewId, dir);
+    const tmp = target + `.tmp.${randomBytes(4).toString('hex')}`;
+    fs.writeFileSync(tmp, JSON.stringify({ preview, direction }), 'utf-8');
+    fs.renameSync(tmp, target);
+    try {
+      fs.chmodSync(target, 0o600);
+    } catch {}
+  } catch {
+    // persistence is best-effort; the in-memory record still works in-process
+  }
+  return previewFile(preview.previewId, dir);
+}
+
+/** Delete every persisted preview file under dir (cleanup helper). */
+export function clearPreviewStore(dir: string): void {
+  if (!dir) return;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (f.endsWith('.json')) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
+export function storePreview(preview: SyncPreview, direction?: SyncDirection, dir?: string): void {
   pruneExpired();
   if (previews.size >= MAX_PREVIEWS) {
     let oldestId: string | null = null;
@@ -47,6 +127,7 @@ export function storePreview(preview: SyncPreview, direction?: SyncDirection): v
   }
   previews.set(preview.previewId, preview);
   if (direction) previewDirections.set(preview.previewId, direction);
+  if (dir) persistPreview(preview, direction, dir);
   const ttl = Math.max(0, new Date(preview.expiresAt).getTime() - Date.now());
   setTimeout(() => {
     previews.delete(preview.previewId);
@@ -54,14 +135,29 @@ export function storePreview(preview: SyncPreview, direction?: SyncDirection): v
   }, ttl).unref?.();
 }
 
-export function getPreview(id: string): SyncPreview | undefined {
-  const p = previews.get(id);
-  if (!p) return undefined;
+export function getPreview(id: string, dir?: string): SyncPreview | undefined {
+  const cached = previews.get(id);
+  if (cached) {
+    if (new Date(cached.expiresAt).getTime() <= Date.now()) {
+      previews.delete(id);
+      previewDirections.delete(id);
+      return undefined;
+    }
+    return cached;
+  }
+  if (!dir) return undefined;
+  const record = readPersisted(id, dir);
+  if (!record) return undefined;
+  const p = record.preview;
   if (new Date(p.expiresAt).getTime() <= Date.now()) {
-    previews.delete(id);
-    previewDirections.delete(id);
+    try {
+      fs.unlinkSync(previewFile(id, dir));
+    } catch {}
     return undefined;
   }
+  // hydrate into memory for single-process idempotence
+  previews.set(p.previewId, p);
+  if (record.direction) previewDirections.set(p.previewId, record.direction);
   return p;
 }
 
@@ -69,9 +165,14 @@ export function getPreviewDirection(id: string): SyncDirection | undefined {
   return previewDirections.get(id);
 }
 
-export function deletePreview(id: string): void {
+export function deletePreview(id: string, dir?: string): void {
   previews.delete(id);
   previewDirections.delete(id);
+  if (dir) {
+    try {
+      fs.unlinkSync(previewFile(id, dir));
+    } catch {}
+  }
 }
 
 export function clearPreviews(): void {
