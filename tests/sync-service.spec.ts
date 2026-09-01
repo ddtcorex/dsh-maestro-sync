@@ -1,177 +1,145 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { SyncService } from '../src/host/sync-service.js';
+import { clearPreviews } from '../src/host/sync-plan.js';
+import { createFakeRemote, makeTempRoots } from './helpers/fake-transport.js';
+
+const MD = 'memories/daily/2026-08-29.md';
+const SESSION = 'sessions/abc123/def456/session.jsonl.zstd';
+
+beforeEach(() => clearPreviews());
+
+const stubRunner: any = {
+  run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })),
+};
 
 describe('SyncService', () => {
-  it('pull merges memories and returns copied/merged counts', async () => {
-    const exec = vi.fn(async (cmd: string) => {
-      if (String(cmd).includes('find')) {
-        return 'memories/daily/2026-08-29.md\nmemories/projects/new.md\nsessions/abc123/def456/session.jsonl.zstd\nsessions/xyz789/uvw012/session.jsonl.zstd\n';
-      }
-      if (String(cmd).includes('cat') && String(cmd).includes('daily')) {
-        return 'foo\n§\nbar\n';
-      }
-      if (String(cmd).includes('cat') && String(cmd).includes('session.jsonl.zstd')) {
-        return '{"seq":1}\n{"seq":2}\n';
-      }
-      if (String(cmd).includes('rsync')) return '';
-      return '';
-    });
-
-    const readMock = vi.fn((p: string) => {
-      const s = String(p);
-      if (s.includes('2026-08-29.md')) return 'a\n§\nfoo\n';
-      if (s.includes('session.jsonl.zstd')) return '{"seq":1}\n';
-      return '';
-    });
-    const writeMock = vi.fn();
-    const copyMock = vi.fn();
-    const existsMock = vi.fn(() => true);
-
-    const fsMock: any = {
-      readFileSync: readMock,
-      writeFileSync: writeMock,
-      copyFileSync: copyMock,
-      existsSync: existsMock,
-      renameSync: vi.fn(),
-      mkdirSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-      statSync: vi.fn(() => ({ isDirectory: () => false, isFile: () => true })),
-      openSync: vi.fn(() => 1),
-      fsyncSync: vi.fn(),
-      closeSync: vi.fn(),
-    };
-
-    const svc = new SyncService({
-      localDsh: '/tmp/a',
-      remote: 'host',
-      remoteDsh: '~/.dsh',
-      exec: exec as any,
-      fs: fsMock as any,
-    });
-
-    // mock file discovery to avoid real FS walk — use eligible paths
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily/2026-08-29.md', 'sessions/abc123/def456/session.jsonl.zstd']);
-    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue([
-      'memories/daily/2026-08-29.md',
-      'memories/projects/new.md',
-      'sessions/abc123/def456/session.jsonl.zstd',
-      'sessions/xyz789/uvw012/session.jsonl.zstd',
-    ]);
-
-    const res = await svc.pull({ dryRun: false });
-    expect(res.copied).toBe(2);
-    expect(res.merged).toBeGreaterThanOrEqual(1);
-    expect(res.added).toBeGreaterThanOrEqual(1);
-    expect(res.conflicts).toBeDefined();
+  it('status partitions by path only and never implies content equality', async () => {
+    const { localRoot, cleanup } = makeTempRoots('status-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nlocal\n');
+      // same path exists remotely with different content -> both, not "in sync"
+      const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nremote\n')]]));
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+      });
+      const st = await svc.status();
+      expect(st.both).toBe(1);
+      expect(st.localOnly).toBe(0);
+      expect(st.remoteOnly).toBe(0);
+      expect(st.localOnlyFiles).toEqual([]);
+    } finally {
+      cleanup();
+    }
   });
 
-  it('status without fetch returns partition counts', async () => {
-    const exec = vi.fn(async (cmd: string) => {
-      if (String(cmd).includes('find')) {
-        return 'memories/a.md\nmemories/b.md\n';
-      }
-      if (String(cmd).includes('echo ok')) return 'ok';
-      return '';
-    });
-    const svc = new SyncService({
-      localDsh: '/tmp/a',
-      remote: 'host',
-      remoteDsh: '~/.dsh',
-      exec: exec as any,
-    });
-    vi.spyOn(svc, 'checkConnection').mockResolvedValue({ ok: true, host: 'host', latencyMs: 1 } as any);
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/a.md', 'memories/c.md']);
-    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/a.md', 'memories/b.md']);
-
-    const st = await svc.status();
-    // status should not call cat/rsync, only find (via mocked lists)
-    expect(st.both).toBe(1);
-    expect(st.remoteOnly).toBe(1);
-    expect(st.localOnly).toBe(1);
-    // exec should not have been called with cat
-    const catCalls = exec.mock.calls.filter(([c]) => String(c).includes('cat'));
-    expect(catCalls.length).toBe(0);
+  it('statusPage paginates with a cursor and bounded page size', async () => {
+    const { localRoot, cleanup } = makeTempRoots('page-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      for (let i = 0; i < 12; i++) fs.writeFileSync(path.join(localRoot, `memories/daily/2026-08-01-${String(i).padStart(2, '0')}.md`), `day ${i}\n`);
+      const fake = createFakeRemote();
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+      });
+      const page1 = await svc.statusPage({ bucket: 'localOnly', cursor: 0, limit: 5 });
+      expect(page1.total).toBe(12);
+      expect(page1.files.length).toBe(5);
+      expect(page1.nextCursor).toBe(5);
+      const page2 = await svc.statusPage({ bucket: 'localOnly', cursor: page1.nextCursor!, limit: 5 });
+      expect(page2.files.length).toBe(5);
+      expect(page2.nextCursor).toBe(10);
+      const page3 = await svc.statusPage({ bucket: 'localOnly', cursor: page2.nextCursor!, limit: 5 });
+      expect(page3.files.length).toBe(2);
+      expect(page3.nextCursor).toBeNull();
+      // pages are disjoint
+      const seen = new Set([...page1.files, ...page2.files, ...page3.files]);
+      expect(seen.size).toBe(12);
+      // small JSON page (RPC-safe)
+      expect(JSON.stringify(page1).length).toBeLessThan(64 * 1024);
+    } finally {
+      cleanup();
+    }
   });
 
-  it('pull dryRun does not write', async () => {
-    const exec = vi.fn(async (cmd: string) => {
-      if (String(cmd).includes('find')) return 'memories/daily.md\n';
-      if (String(cmd).includes('cat')) return 'foo\n§\nnew\n';
-      return '';
-    });
-    const writeMock = vi.fn();
-    const fsMock: any = {
-      readFileSync: vi.fn(() => 'foo\n'),
-      writeFileSync: writeMock,
-      copyFileSync: vi.fn(),
-      existsSync: vi.fn(() => true),
-      renameSync: vi.fn(),
-      mkdirSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-      statSync: vi.fn(() => ({ isDirectory: () => false })),
-    };
+  it('resolveTarget resolves a ~/.dsh placeholder via transport preflight to an absolute path', async () => {
+    const fake = createFakeRemote();
     const svc = new SyncService({
       localDsh: '/tmp/a',
-      remote: 'host',
+      remote: 'sync-host',
       remoteDsh: '~/.dsh',
-      exec: exec as any,
-      fs: fsMock as any,
+      fs: fs as any,
+      runner: stubRunner as any,
+      transport: fake.transport as any,
     });
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily.md']);
-    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/daily.md']);
-    const res = await svc.pull({ dryRun: true });
-    expect(writeMock).not.toHaveBeenCalled();
-    expect(res.added).toBeGreaterThanOrEqual(0);
+    const target = await svc.resolveTarget();
+    expect(target.host).toBe('sync-host');
+    expect(target.dshRoot).toBe('/home/kai/.dsh');
   });
 
-  it('push returns copied/merged counts', async () => {
-    const exec = vi.fn(async () => '');
-    const readMock = vi.fn((p: string) => {
-      const s = String(p);
-      if (s.includes('a.md')) return 'content a';
-      if (s.includes('local-only.md')) return 'local only';
-      return '';
-    });
-    const fsMock: any = {
-      readFileSync: readMock,
-      writeFileSync: vi.fn(),
-      copyFileSync: vi.fn(),
-      existsSync: vi.fn(() => true),
-      renameSync: vi.fn(),
-      mkdirSync: vi.fn(),
-      readdirSync: vi.fn(() => []),
-      statSync: vi.fn(() => ({ isDirectory: () => false })),
-      openSync: vi.fn(() => 1),
-      fsyncSync: vi.fn(),
-      closeSync: vi.fn(),
-      rmSync: vi.fn(),
-    };
-    const svc = new SyncService({
-      localDsh: '/tmp/a',
-      remote: 'host',
-      remoteDsh: '~/.dsh',
-      exec: exec as any,
-      fs: fsMock as any,
-    });
-    vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily/2026-08-29.md', 'memories/daily/2026-08-30.md']);
-    vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/daily/2026-08-29.md']);
-    const res = await svc.push({ dryRun: true });
-    expect(res.copied).toBe(1);
-    expect(res.conflicts).toBeDefined();
+  it('preview while offline throws a structured OFFLINE failure', async () => {
+    const { localRoot, cleanup } = makeTempRoots('offline-');
+    try {
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: { run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('Connection refused'), exitCode: 255 })) } as any,
+        transport: createFakeRemote().transport as any,
+      });
+      await expect(svc.preview({ direction: 'pull' })).rejects.toMatchObject({ phase: 'validate', code: 'OFFLINE' });
+    } finally {
+      cleanup();
+    }
   });
 
-  it('listLocalFiles and listRemoteFiles are mockable', async () => {
-    const exec = vi.fn(async () => 'memories/x.md\n');
-    const svc = new SyncService({
-      localDsh: '/tmp/a',
-      remote: 'host',
-      remoteDsh: '~/.dsh',
-      exec: exec as any,
-    });
-    // default impl should be callable even without spy
-    expect(typeof svc.listLocalFiles).toBe('function');
-    expect(typeof svc.listRemoteFiles).toBe('function');
-    const remoteFiles = await svc.listRemoteFiles();
-    expect(Array.isArray(remoteFiles)).toBe(true);
+  it('eligibility: only memory md, SUGGESTIONS.jsonl and session zstd are snapshotted', async () => {
+    const { localRoot, cleanup } = makeTempRoots('eligible-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'sessions', 'abc123', 'def456'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md'), 'a\n§\nlocal\n');
+      fs.writeFileSync(path.join(localRoot, 'memories', 'SUGGESTIONS.jsonl'), '{"s":1}\n');
+      fs.writeFileSync(path.join(localRoot, SESSION), 'not-real-zstd-bytes');
+      // excluded files exist but must never be read/hashed
+      fs.writeFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md.bak.1720000000.aa'), 'backup bytes');
+      fs.mkdirSync(path.join(localRoot, 'profiles', 'web'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'profiles', 'web', 'package.json'), '{"private":true}');
+      fs.writeFileSync(path.join(localRoot, 'settings.json'), '{"secret":true}');
+
+      const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nlocal\n')]]));
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+      });
+      const preview = await svc.preview({ direction: 'pull' });
+      // only the md + jsonl + session are considered; .bak.* / profiles / settings are excluded
+      const paths = preview.actions.map((a: any) => a.path);
+      expect(paths).toContain('memories/daily/2026-08-29.md');
+      expect(paths).toContain('memories/SUGGESTIONS.jsonl');
+      expect(paths).toContain(SESSION);
+      expect(paths.some((p: string) => p.includes('.bak.') || p.startsWith('profiles/') || p === 'settings.json')).toBe(false);
+      // SUGGESTIONS.jsonl and the session zstd are identical -> skip; the md differs -> merge
+      expect(preview.actions.find((a: any) => a.path === MD).action).toBe('skip');
+    } finally {
+      cleanup();
+    }
   });
 });

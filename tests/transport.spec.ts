@@ -25,7 +25,7 @@ describe('transport', () => {
   it('remoteHome returns validated absolute path as bytes', async () => {
     const runner = makeRunner();
     const transport = new SshRsyncTransport(runner);
-    const home = await transport.remoteHome({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
+    const home = await transport.remoteHome({ host: 'sync-host' });
     expect(home).toBe('/home/kai');
     expect(runner.run).toHaveBeenCalledWith('ssh', expect.arrayContaining(['sync-host']), expect.anything());
   });

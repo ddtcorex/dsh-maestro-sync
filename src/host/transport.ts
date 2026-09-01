@@ -4,12 +4,20 @@ import { join } from 'node:path';
 import type { RemoteTarget, SyncFailure, SyncPhase } from './sync-types.js';
 import type { ProcessRunner, ProcessResult } from './process-runner.js';
 import { validateRemoteTarget } from './validation.js';
+import { REMOTE_AGENT_REL, remoteAgentSource, verifyRemoteAgentSource } from './remote-agent.js';
 
 export interface SyncTransport {
-  remoteHome(target: RemoteTarget): Promise<string>;
+  /** Resolve the remote user's $HOME as raw bytes (preflight, never shell ~ expansion). */
+  remoteHome(target: { host: string }): Promise<string>;
+  /** List files under the validated remote DSH root. */
   list(target: RemoteTarget): Promise<Buffer>;
+  /** Rsync one batched --files-from stage of validated relative paths into `destination`. */
   stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void>;
+  /** Upload materialized bytes for one operation into the remote private stage dir. */
   upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void>;
+  /** Install the fixed remote CAS helper under `<root>/.maestro-sync/bin`. */
+  ensureAgent(target: RemoteTarget): Promise<void>;
+  /** Run the fixed remote helper with `operationId`; the JSONL manifest is the only input. */
   commit(target: RemoteTarget, operationId: string, manifest: Buffer): Promise<void>;
 }
 
@@ -25,9 +33,12 @@ function toFailure(phase: SyncPhase, result: ProcessResult, file: string): SyncF
 export class SshRsyncTransport implements SyncTransport {
   constructor(private readonly runner: ProcessRunner) {}
 
-  async remoteHome(target: RemoteTarget): Promise<string> {
-    const validated = validateRemoteTarget(target);
-    const result = await this.runner.run('ssh', [validated.host, 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
+  async remoteHome(target: { host: string }): Promise<string> {
+    if (!target || typeof target.host !== 'string' || target.host.length === 0) {
+      throw Object.assign(new Error('remoteHome requires a non-empty host'), failure('validate', 'INVALID_HOST', 'remoteHome requires a non-empty host'));
+    }
+    // Preflight: `printf %s '$HOME'` over ssh returns the remote home as bytes.
+    const result = await this.runner.run('ssh', [target.host, 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
     if (result.exitCode !== 0) {
       throw Object.assign(new Error(`remoteHome failed: ${result.stderr.toString()}`), failure('validate', 'REMOTE_HOME_FAILED', result.stderr.toString()));
     }
@@ -40,7 +51,9 @@ export class SshRsyncTransport implements SyncTransport {
 
   async list(target: RemoteTarget): Promise<Buffer> {
     const validated = validateRemoteTarget(target);
-    // Use ssh to run find on remote DSH root, output null-separated or newline
+    // dshRoot is strictly validated (absolute, [A-Za-z0-9._-/], no meta), so it is
+    // safe as a single argv item of the remote `find` command. Discovered file names
+    // are never interpolated here — the manifest is staged via --files-from instead.
     const remoteCmd = `find ${validated.dshRoot} -type f -print`;
     const result = await this.runner.run('ssh', [validated.host, remoteCmd], { timeoutMs: 15000 });
     if (result.exitCode !== 0) {
@@ -58,7 +71,7 @@ export class SshRsyncTransport implements SyncTransport {
       await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
       const result = await this.runner.run(
         'rsync',
-        ['-avz', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
+        ['-az', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
         { timeoutMs: 30000 },
       );
       if (result.exitCode !== 0) {
@@ -73,7 +86,6 @@ export class SshRsyncTransport implements SyncTransport {
     const validated = validateRemoteTarget(target);
     if (paths.length === 0) return;
     const remoteStage = `${validated.dshRoot}/.maestro-sync/stage/${operationId}`;
-    // Ensure remote stage dir exists
     const mkdirResult = await this.runner.run('ssh', [validated.host, 'mkdir', '-p', remoteStage], { timeoutMs: 8000 });
     if (mkdirResult.exitCode !== 0) {
       throw Object.assign(new Error(`mkdir failed: ${mkdirResult.stderr.toString()}`), failure('publish', 'UPLOAD_FAILED', mkdirResult.stderr.toString()));
@@ -84,7 +96,7 @@ export class SshRsyncTransport implements SyncTransport {
       await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
       const result = await this.runner.run(
         'rsync',
-        ['-avz', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
+        ['-az', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
         { timeoutMs: 30000 },
       );
       if (result.exitCode !== 0) {
@@ -95,15 +107,40 @@ export class SshRsyncTransport implements SyncTransport {
     }
   }
 
+  async ensureAgent(target: RemoteTarget): Promise<void> {
+    const validated = validateRemoteTarget(target);
+    const agentPath = `${validated.dshRoot}/${REMOTE_AGENT_REL}`;
+    const agentDir = `${validated.dshRoot}/.maestro-sync/bin`;
+    const source = verifyRemoteAgentSource(remoteAgentSource());
+    // mkdir -p the private bin dir, then stream the fixed helper via stdin (argv-only).
+    const mkdirResult = await this.runner.run('ssh', [validated.host, 'mkdir', '-p', agentDir], { timeoutMs: 8000 });
+    if (mkdirResult.exitCode !== 0) {
+      throw Object.assign(new Error(`ensureAgent mkdir failed: ${mkdirResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', mkdirResult.stderr.toString()));
+    }
+    const installResult = await this.runner.run('ssh', [validated.host, `cat > ${agentPath}`], { input: Buffer.from(source, 'utf-8'), timeoutMs: 8000 });
+    if (installResult.exitCode !== 0) {
+      throw Object.assign(new Error(`ensureAgent install failed: ${installResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', installResult.stderr.toString()));
+    }
+    const chmodResult = await this.runner.run('ssh', [validated.host, 'chmod', '700', agentPath], { timeoutMs: 8000 });
+    if (chmodResult.exitCode !== 0) {
+      throw Object.assign(new Error(`ensureAgent chmod failed: ${chmodResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', chmodResult.stderr.toString()));
+    }
+  }
+
   async commit(target: RemoteTarget, operationId: string, manifest: Buffer): Promise<void> {
     const validated = validateRemoteTarget(target);
+    // Fixed protocol command: the helper path is a validated constant under the
+    // validated root; operationId is a locally generated hex id. The manifest on
+    // stdin is the only carrier of discovered paths.
     const result = await this.runner.run(
       'ssh',
-      [validated.host, 'maestro-sync-commit', operationId],
+      [validated.host, `${validated.dshRoot}/${REMOTE_AGENT_REL}`, operationId],
       { input: manifest, timeoutMs: 15000 },
     );
     if (result.exitCode !== 0) {
-      throw Object.assign(new Error(`commit failed: ${result.stderr.toString()}`), failure('publish', 'COMMIT_FAILED', result.stderr.toString()));
+      const stderr = result.stderr.toString('utf-8');
+      const code = stderr.includes('CONCURRENT_MODIFICATION') ? 'CONCURRENT_MODIFICATION' : 'COMMIT_FAILED';
+      throw Object.assign(new Error(`commit failed: ${stderr || `exit ${result.exitCode}`}`), failure('publish', code, stderr || `exit ${result.exitCode}`));
     }
   }
 }
