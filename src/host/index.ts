@@ -1,4 +1,6 @@
-// dsh-maestro-sync — Host index with tools + RPC (Task 5)
+// dsh-maestro-sync — Host index: preview/apply tools + loopback RPC (Task 6).
+// Mutation exists only through preview-bound apply(confirm:true); the legacy
+// pull/push endpoints and tools are preview-only compatibility aliases.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -9,29 +11,30 @@ import { loadSyncConfig } from './config.js';
 export const RPC_CHANNEL = '/dsh-maestro-sync';
 
 /**
- * Best-effort tunnel profile restore after pull/push.
- * Mirrors sync-harness.sh apply_local_tunnel_profile:
- * - reads tunnel-profiles/<profile>/settings-tunnel.json and cloudflared-config.yml
- * - re-patches maestro/settings.json via config-lib (or direct fs fallback)
- * No throw — failures are ignored (profile may not exist on CI).
+ * Best-effort tunnel profile restore after a confirmed apply.
+ * Mirrors sync-harness.sh apply_local_tunnel_profile: re-patches
+ * maestro/settings.json domains.tunnel from this machine's own profile dir.
+ * Never throws; profile may not exist on CI.
  */
 async function restoreTunnelProfile(): Promise<void> {
   try {
     const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-    // Attempt to load via config-lib first to get tunnel domain, then restore
-    // For minimal implementation, just try fs-based restore if profile exists
     const profilesRoot = path.join(dshHome, 'dsh-maestro-remote', 'tunnel-profiles');
     if (!fs.existsSync(profilesRoot)) return;
-    // list profiles
     let profiles: string[] = [];
     try {
       profiles = fs.readdirSync(profilesRoot).filter((n) => {
-        try { return fs.statSync(path.join(profilesRoot, n)).isDirectory(); } catch { return false; }
+        try {
+          return fs.statSync(path.join(profilesRoot, n)).isDirectory();
+        } catch {
+          return false;
+        }
       });
-    } catch { return; }
+    } catch {
+      return;
+    }
     if (profiles.length === 0) return;
 
-    // Prefer LOCAL_TUNNEL_PROFILE env or first profile
     const envProfile = process.env.LOCAL_TUNNEL_PROFILE || process.env.TUNNEL_PROFILE;
     const profileName = envProfile && profiles.includes(envProfile) ? envProfile : profiles[0];
     if (!profileName) return;
@@ -44,33 +47,26 @@ async function restoreTunnelProfile(): Promise<void> {
 
     if (!fs.existsSync(tunnelSettingsPath) || !fs.existsSync(settingsPath)) return;
 
-    // Patch cloudflared config if present
     try {
       if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {
         fs.copyFileSync(cloudflaredSrc, cloudflaredDst);
-        try { fs.chmodSync(cloudflaredDst, 0o600); } catch {}
+        try {
+          fs.chmodSync(cloudflaredDst, 0o600);
+        } catch {}
       }
     } catch {}
 
-    // Patch settings.json domains.tunnel via raw fs (fallback) and via config-lib if available
     try {
       const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
       const tunnelDomain = tunnelJson?.domains?.tunnel;
       if (!tunnelDomain) return;
-
-      // Try config-lib patch first
       try {
         const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
-        if (typeof cfgLib.load === 'function' && typeof cfgLib.get === 'function') {
-          // Use generic set if available
-          if (typeof cfgLib.set === 'function') {
-            await cfgLib.set('tunnel', tunnelDomain);
-            return;
-          }
+        if (typeof cfgLib.set === 'function') {
+          await cfgLib.set('tunnel', tunnelDomain);
+          return;
         }
       } catch {}
-
-      // Fallback: direct JSON patch
       const raw = fs.readFileSync(settingsPath, 'utf-8');
       const doc = JSON.parse(raw);
       doc.domains = doc.domains || {};
@@ -78,137 +74,166 @@ async function restoreTunnelProfile(): Promise<void> {
       const tmp = settingsPath + '.tmp.' + Math.random().toString(16).slice(2, 6);
       fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf-8');
       fs.renameSync(tmp, settingsPath);
-      try { fs.chmodSync(settingsPath, 0o600); } catch {}
+      try {
+        fs.chmodSync(settingsPath, 0o600);
+      } catch {}
     } catch {}
   } catch {}
+}
+
+function textTool(name: string, description: string, params: Record<string, any>, execute: (args: any) => Promise<string>) {
+  return defineTool({
+    name,
+    description,
+    parameters: params,
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { text: { type: 'string', required: true } },
+      },
+      render: (_args, value) => [{ type: 'text', text: value.text }],
+    },
+    async execute(args: any) {
+      return { text: await execute(args ?? {}) };
+    },
+  });
 }
 
 export default {
   inject: ['tools', 'connection'] as const,
   apply(ctx: any) {
-    // maestro_sync_pull
+    const makeService = async () => {
+      const cfg = await loadSyncConfig();
+      return new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
+    };
+
+    // maestro_sync_preview — read-only exact plan
     ctx.effect(() =>
-      ctx.tools.register(defineTool({
-        name: 'maestro_sync_pull',
-        description: 'Pull merge DSH state remote->local',
-        parameters: {
-          dryRun: { type: 'boolean', description: 'preview without writing' },
-        },
-        output: {
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: { text: { type: 'string', required: true } },
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_preview',
+          'Preview exact pull/push merge plan (read-only: copy/merge/skip/conflict + added counts)',
+          { direction: { type: 'string', enum: ['pull', 'push'], description: 'plan direction' } },
+          async ({ direction }) => {
+            const svc = await makeService();
+            const preview = await svc.preview({ direction: direction === 'push' ? 'push' : 'pull' });
+            return JSON.stringify({
+              ok: true,
+              previewId: preview.previewId,
+              revision: preview.revision,
+              expiresAt: preview.expiresAt,
+              summary: preview.summary,
+              actions: preview.actions,
+            });
           },
-          render: (_args, value) => [{ type: 'text', text: value.text }],
-        },
-        async execute({ dryRun }) {
-          const cfg = await loadSyncConfig();
-          const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
-          const result = await svc.pull({ dryRun: !!dryRun });
-          if (!dryRun) await restoreTunnelProfile();
-          return { text: JSON.stringify({ ok: true, ...result }) };
-        },
-      })),
+        ),
+      ),
     );
 
-    // maestro_sync_push
+    // maestro_sync_apply — the only mutation route (preview-bound, confirm required)
     ctx.effect(() =>
-      ctx.tools.register(defineTool({
-        name: 'maestro_sync_push',
-        description: 'Push merge DSH state local->remote',
-        parameters: {
-          dryRun: { type: 'boolean', description: 'preview without writing' },
-        },
-        output: {
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: { text: { type: 'string', required: true } },
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_apply',
+          'Apply a previously previewed plan. Requires previewId, direction and confirm:true.',
+          {
+            previewId: { type: 'string', description: 'preview id returned by preview' },
+            direction: { type: 'string', enum: ['pull', 'push'], description: 'apply direction (must match preview)' },
+            confirm: { type: 'boolean', description: 'must be true' },
           },
-          render: (_args, value) => [{ type: 'text', text: value.text }],
-        },
-        async execute({ dryRun }) {
-          const cfg = await loadSyncConfig();
-          const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
-          const result = await svc.push({ dryRun: !!dryRun });
-          if (!dryRun) await restoreTunnelProfile();
-          return { text: JSON.stringify({ ok: true, ...result }) };
-        },
-      })),
+          async ({ previewId, direction, confirm }) => {
+            if (confirm !== true) return JSON.stringify({ ok: false, error: 'apply requires confirm:true' });
+            if (!previewId || typeof previewId !== 'string') return JSON.stringify({ ok: false, error: 'apply requires previewId' });
+            const svc = await makeService();
+            try {
+              const r = await svc.apply({ previewId, direction: direction === 'push' ? 'push' : 'pull', confirm: true });
+              if (r.ok) await restoreTunnelProfile();
+              return JSON.stringify({ ok: r.ok, revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures });
+            } catch (e: any) {
+              return JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase });
+            }
+          },
+        ),
+      ),
     );
 
-    // maestro_sync_status
+    // maestro_sync_status — bounded cursor-paged file status
     ctx.effect(() =>
-      ctx.tools.register(defineTool({
-        name: 'maestro_sync_status',
-        description: 'Sync status: counts of local/remote/both files',
-        parameters: {},
-        output: {
-          schema: {
-            type: 'object',
-            additionalProperties: false,
-            properties: { text: { type: 'string', required: true } },
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_status',
+          'Sync status: counts of local/remote/both files (never implies same content)',
+          {},
+          async () => {
+            const svc = await makeService();
+            const st = await svc.status();
+            return JSON.stringify({ ok: true, remoteHost: st.remoteHost, connection: st.connection, localOnly: st.localOnly, remoteOnly: st.remoteOnly, both: st.both });
           },
-          render: (_args, value) => [{ type: 'text', text: value.text }],
-        },
-        async execute() {
-          const cfg = await loadSyncConfig();
-          const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
-          const st = await svc.status();
-          return { text: JSON.stringify({ ok: true, ...st }) };
-        },
-      })),
+        ),
+      ),
     );
 
-    // Loopback RPC for Settings UI
+    // maestro_sync_pull / maestro_sync_push — preview-only compatibility aliases
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_pull',
+          'Deprecated: preview-only pull alias (never writes). Use preview + apply.',
+          { dryRun: { type: 'boolean', description: 'ignored — always preview-only' } },
+          async () => {
+            const svc = await makeService();
+            const preview = await svc.preview({ direction: 'pull' });
+            return JSON.stringify({ ok: true, previewId: preview.previewId, revision: preview.revision, summary: preview.summary });
+          },
+        ),
+      ),
+    );
+
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_push',
+          'Deprecated: preview-only push alias (never writes). Use preview + apply.',
+          { dryRun: { type: 'boolean', description: 'ignored — always preview-only' } },
+          async () => {
+            const svc = await makeService();
+            const preview = await svc.preview({ direction: 'push' });
+            return JSON.stringify({ ok: true, previewId: preview.previewId, revision: preview.revision, summary: preview.summary });
+          },
+        ),
+      ),
+    );
+
+    // Loopback RPC for the Settings UI
     ctx.effect(() =>
       ctx.connection.rpc.handle(
         RPC_CHANNEL,
         async (method: string, args: any) => {
-          const cfg = await loadSyncConfig();
-          const svc = new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
-          const dryRun = !!(args && (args as any).dryRun);
+          const svc = await makeService();
           switch (String(method)) {
-            case 'pull': {
-              const r = await svc.pull({ dryRun });
-              if (!dryRun) await restoreTunnelProfile();
-              return { ok: true, ...r };
-            }
+            case 'pull':
             case 'push': {
-              const r = await svc.push({ dryRun });
-              if (!dryRun) await restoreTunnelProfile();
-              return { ok: true, ...r };
+              // preview-only compatibility: no argument (including dryRun) can apply
+              const preview = await svc.preview({ direction: method === 'push' ? 'push' : 'pull' });
+              return { ok: true, previewId: preview.previewId, revision: preview.revision, expiresAt: preview.expiresAt, summary: preview.summary };
             }
             case 'status': {
+              if (args && typeof args.bucket === 'string') {
+                const page = await svc.statusPage({ bucket: args.bucket, cursor: args.cursor, limit: args.limit });
+                return { ok: true, ...page };
+              }
               const r = await svc.status();
-              // slim file lists to stay within 64KB RPC limit (original 919 files ~95KB -> slim 8 files ~1.4KB)
-              const slim = {
-                localOnly: (r as any).localOnly,
-                remoteOnly: (r as any).remoteOnly,
-                both: (r as any).both,
-                localOnlyFiles: (r as any).localOnlyFiles?.slice(0, 8) ?? [],
-                remoteOnlyFiles: (r as any).remoteOnlyFiles?.slice(0, 8) ?? [],
-                bothFiles: (r as any).bothFiles?.slice(0, 8) ?? [],
-                connection: (r as any).connection,
-                remoteHost: (r as any).remoteHost,
-              };
-              try {
-                const len = JSON.stringify(r).length;
-                const slimLen = JSON.stringify(slim).length;
-                console.log('[maestro-sync] status', JSON.stringify({ remoteHost: (r as any).remoteHost, conn: (r as any).connection, localOnly: (r as any).localOnly, remoteOnly: (r as any).remoteOnly, both: (r as any).both, len, slimLen, keys: Object.keys(slim) }).slice(0, 2000));
-                console.log('[maestro-sync] slim', JSON.stringify(slim).slice(0, 2000));
-              } catch {}
-              return { ok: true, ...slim };
+              return { ok: true, remoteHost: r.remoteHost, connection: r.connection, localOnly: r.localOnly, remoteOnly: r.remoteOnly, both: r.both };
             }
             case 'check': {
               const r = await svc.checkConnection();
-              return { ok: true, connection: r, remoteHost: cfg.remoteHost };
+              return { ok: true, connection: r, remoteHost: r.host };
             }
             case 'preview': {
               const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
-              const r = await svc.preview({ direction: dir as any });
-              return { ok: true, ...r };
+              const r = await svc.preview({ direction: dir });
+              return { ok: true, previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, connection: r.connection, remoteHost: r.remoteHost };
             }
             case 'apply': {
               const previewId = args && (args as any).previewId;
@@ -217,8 +242,9 @@ export default {
               if (confirm !== true) return { ok: false, error: 'apply requires confirm:true' };
               if (!previewId || typeof previewId !== 'string') return { ok: false, error: 'apply requires previewId' };
               try {
-                const r = await svc.apply({ previewId, direction: direction as any, confirm: true });
-                return r as any;
+                const r = await svc.apply({ previewId, direction, confirm: true });
+                if (r.ok) await restoreTunnelProfile();
+                return { ok: r.ok, revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures };
               } catch (e: any) {
                 return { ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase };
               }
