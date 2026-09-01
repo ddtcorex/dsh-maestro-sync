@@ -11,6 +11,13 @@ export interface SyncTransport {
   remoteHome(target: { host: string }): Promise<string>;
   /** List files under the validated remote DSH root. */
   list(target: RemoteTarget): Promise<Buffer>;
+  /**
+   * Checksum-compare listed paths between the remote root and `localRoot`
+   * without transferring content (rsync -rcn). Returns the relative names of
+   * files that actually differ (added, content-changed) — the candidates that
+   * later get staged. Bytes are never copied for identical files.
+   */
+  compare(target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer>;
   /** Rsync one batched --files-from stage of validated relative paths into `destination`. */
   stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void>;
   /** Upload materialized bytes for one operation into the remote private stage dir. */
@@ -66,6 +73,28 @@ export class SshRsyncTransport implements SyncTransport {
     return result.stdout;
   }
 
+  async compare(target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer> {
+    const validated = validateRemoteTarget(target);
+    if (paths.length === 0) return Buffer.alloc(0);
+    const tmp = await mkdtemp(join(tmpdir(), 'maestro-compare-'));
+    try {
+      const listFile = join(tmp, 'files.txt');
+      await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
+      const result = await this.runner.run(
+        'rsync',
+        ['-rcn', `--out-format=%n`, `--files-from=${listFile}`, `${validated.host}:${validated.dshRoot}/`, localRoot.endsWith('/') ? localRoot : localRoot + '/'],
+        { timeoutMs: 60000 },
+      );
+      // 0 = ok; 23/24 = partial/hidden files (vanished) — stdout still lists the diffs.
+      if (result.exitCode !== 0 && result.exitCode !== 23 && result.exitCode !== 24) {
+        throw Object.assign(new Error(`compare failed: ${result.stderr.toString()}`), failure('snapshot', 'COMPARE_FAILED', result.stderr.toString()));
+      }
+      return result.stdout;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
   async stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void> {
     const validated = validateRemoteTarget(target);
     if (paths.length === 0) return;
@@ -76,7 +105,7 @@ export class SshRsyncTransport implements SyncTransport {
       const result = await this.runner.run(
         'rsync',
         ['-az', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
-        { timeoutMs: 30000 },
+        { timeoutMs: 120000 },
       );
       if (result.exitCode !== 0) {
         throw Object.assign(new Error(`stage failed: ${result.stderr.toString()}`), failure('stage', 'STAGE_FAILED', result.stderr.toString()));
@@ -101,7 +130,7 @@ export class SshRsyncTransport implements SyncTransport {
       const result = await this.runner.run(
         'rsync',
         ['-az', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
-        { timeoutMs: 30000 },
+        { timeoutMs: 120000 },
       );
       if (result.exitCode !== 0) {
         throw Object.assign(new Error(`upload failed: ${result.stderr.toString()}`), failure('publish', 'UPLOAD_FAILED', result.stderr.toString()));

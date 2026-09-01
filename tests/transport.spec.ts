@@ -49,6 +49,19 @@ describe('transport', () => {
     expect(args.join(' ')).toContain('sync-host:/home/kai/.dsh/');
   });
 
+  it('compare uses a checksum dry-run that transfers no content', async () => {
+    const runner = makeRunner();
+    const transport = new SshRsyncTransport(runner);
+    await transport.compare({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, '/home/kai/.dsh', ['memories/a.md', 'memories/b.md']);
+    const rsyncCalls = (runner.run as any).mock.calls.filter(([f]: any) => f === 'rsync');
+    expect(rsyncCalls.length).toBe(1);
+    const args = rsyncCalls[0][1] as string[];
+    expect(args.join(' ')).toContain('-rcn');
+    expect(args.join(' ')).toContain('--out-format=%n');
+    expect(args.join(' ')).toContain('--files-from=');
+    expect(args.join(' ')).toContain('/home/kai/.dsh/');
+  });
+
   it('list prunes heavy dirs so a real ~/.dsh lists in seconds', async () => {
     const runner = makeRunner();
     const transport = new SshRsyncTransport(runner);

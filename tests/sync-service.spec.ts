@@ -74,6 +74,37 @@ describe('SyncService', () => {
     }
   });
 
+  it('stages only change candidates: identical bytes are never transferred', async () => {
+    const { localRoot, cleanup } = makeTempRoots('diffstage-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'memories', 'shared.md'), 'identical\n');
+      // remote: one identical file and one divergent file
+      const fake = createFakeRemote(
+        new Map<string, Buffer>([
+          ['memories/shared.md', Buffer.from('identical\n')],
+          ['memories/daily/2026-08-29.md', Buffer.from('a\n§\nremote\n')],
+        ]),
+      );
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+      });
+      const preview = await svc.preview({ direction: 'pull' });
+      expect(preview.actions.find((a: any) => a.path === 'memories/shared.md')!.action).toBe('skip');
+      expect(preview.actions.find((a: any) => a.path === 'memories/daily/2026-08-29.md')!.action).toBe('copy');
+      // only the divergent file was staged
+      expect(fake.calls.stage.length).toBe(1);
+      expect(fake.calls.stage[0]!.paths).toEqual(['memories/daily/2026-08-29.md']);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('resolveTarget resolves a ~/.dsh placeholder via transport preflight to an absolute path', async () => {
     const fake = createFakeRemote();
     const svc = new SyncService({
