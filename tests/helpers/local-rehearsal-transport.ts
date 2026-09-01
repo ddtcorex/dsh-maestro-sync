@@ -10,6 +10,7 @@
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import type { SyncTransport } from '../../src/host/transport.js';
 import type { RemoteTarget } from '../../src/host/sync-types.js';
@@ -21,6 +22,22 @@ export class LocalRehearsalTransport implements SyncTransport {
 
   async remoteHome(): Promise<string> {
     return path.dirname(this.remoteRoot);
+  }
+
+  private sha256(buf: Buffer): string {
+    return createHash('sha256').update(buf).digest('hex');
+  }
+
+  async compare(_target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer> {
+    const changed: string[] = [];
+    for (const rel of paths) {
+      const remoteBuf = fs.readFileSync(path.join(this.remoteRoot, rel));
+      const full = path.join(localRoot, rel);
+      let localBuf: Buffer | null = null;
+      if (fs.existsSync(full)) localBuf = fs.readFileSync(full);
+      if (localBuf === null || this.sha256(localBuf) !== this.sha256(remoteBuf)) changed.push(rel);
+    }
+    return Buffer.from(changed.join('\n') + (changed.length ? '\n' : ''), 'utf-8');
   }
 
   async list(): Promise<Buffer> {

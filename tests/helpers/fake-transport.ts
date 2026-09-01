@@ -53,6 +53,18 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
         const abs = [...remote.keys()].sort().map((k) => `${dshRoot}/${k}`);
         return Buffer.from(abs.join('\n') + (abs.length ? '\n' : ''), 'utf-8');
       },
+      compare: async (target: RemoteTarget, localRoot: string, paths: readonly string[]) => {
+        const changed: string[] = [];
+        for (const rel of paths) {
+          const remoteBuf = remote.get(rel);
+          if (remoteBuf === undefined) continue;
+          let localBuf: Buffer | null = null;
+          const full = path.join(localRoot, rel);
+          if (fs.existsSync(full)) localBuf = fs.readFileSync(full);
+          if (localBuf === null || sha256(localBuf) !== sha256(remoteBuf)) changed.push(rel);
+        }
+        return Buffer.from(changed.join('\n') + (changed.length ? '\n' : ''), 'utf-8');
+      },
       stage: async (target: RemoteTarget, paths: readonly string[], destination: string) => {
         result.calls.stage.push({ dest: destination, paths: [...paths] });
         for (const rel of paths) {

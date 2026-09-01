@@ -296,41 +296,65 @@ export class SyncService {
     let stagingDir: string | null = null;
     let cleanup: () => void = () => {};
     if (remotePaths.length > 0) {
-      stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
-      const fsMod = this.fs;
+      // Stage only the change candidates: checksum-compare (rsync -rcn) first,
+      // so a real DSH home with hundreds of unchanged session files is never
+      // transferred wholesale.
+      let changed: string[] = [];
       try {
-        if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
-        else nodeFs.mkdirSync(stagingDir, { recursive: true });
+        const compareOut = await this.transport.compare(target, this.localDsh, remotePaths);
+        const changedSet = new Set(compareOut.toString('utf-8').split('\n').map((s) => s.trim()).filter(Boolean));
+        changed = remotePaths.filter((p) => changedSet.has(p));
       } catch (e: any) {
-        throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
+        throw syncFailure('snapshot', 'COMPARE_FAILED', `remote compare failed: ${e?.message ?? String(e)}`);
       }
-      cleanup = () => {
+      if (changed.length > 0) {
+        stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
+        const fsMod = this.fs;
         try {
-          if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
-          else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
-        } catch {}
-      };
-      try {
-        await this.transport.stage(target, remotePaths, stagingDir);
-      } catch (e: any) {
-        throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
-      }
-      for (const p of remotePaths) {
-        const stagedPath = path.join(stagingDir, p);
-        const fsMod2 = this.fs;
-        let data: Buffer;
-        try {
-          if (typeof fsMod2.readFileSync === 'function') {
-            const d = fsMod2.readFileSync(stagedPath);
-            data = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
-          } else {
-            data = nodeFs.readFileSync(stagedPath);
-          }
+          if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
+          else nodeFs.mkdirSync(stagingDir, { recursive: true });
         } catch (e: any) {
-          throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
+          throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
         }
-        remoteContents.set(p, data);
-        remoteSnapshots.push(snapshotFile(p, data));
+        cleanup = () => {
+          try {
+            if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
+            else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
+          } catch {}
+        };
+        try {
+          await this.transport.stage(target, changed, stagingDir);
+        } catch (e: any) {
+          throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
+        }
+        for (const p of changed) {
+          const stagedPath = path.join(stagingDir, p);
+          const fsMod2 = this.fs;
+          let data: Buffer;
+          try {
+            if (typeof fsMod2.readFileSync === 'function') {
+              const d = fsMod2.readFileSync(stagedPath);
+              data = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
+            } else {
+              data = nodeFs.readFileSync(stagedPath);
+            }
+          } catch (e: any) {
+            throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
+          }
+          remoteContents.set(p, data);
+          remoteSnapshots.push(snapshotFile(p, data));
+        }
+      }
+      // Files the checksum compare proved byte-identical are represented by the
+      // local buffer (same bytes) — never transferred, but still content-aware
+      // for the pull/push plan (a push must see them as identical, not absent).
+      for (const p of remotePaths) {
+        if (remoteContents.has(p)) continue;
+        const localBuf = localContents.get(p);
+        if (localBuf) {
+          remoteContents.set(p, localBuf);
+          remoteSnapshots.push(snapshotFile(p, localBuf));
+        }
       }
     }
     return { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup };
