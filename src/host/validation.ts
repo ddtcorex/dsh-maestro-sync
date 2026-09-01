@@ -29,30 +29,22 @@ function containsShellMeta(s: string): boolean {
   return /[;`$|&><*?'"\\(){}!]/.test(s);
 }
 
+export function validateHost(host: string): string {
+  if (typeof host !== 'string' || host.length === 0) throw new Error('host must be a non-empty string');
+  if (containsControlChars(host) || host.includes('\u0000')) throw new Error(`invalid host: contains control characters`);
+  if (!HOST_RE.test(host)) throw new Error(`invalid host: ${JSON.stringify(host)} does not match ${HOST_RE}`);
+  if (containsWhitespace(host) || containsShellMeta(host) || host.includes('=')) {
+    throw new Error(`invalid host: ${JSON.stringify(host)} contains illegal characters`);
+  }
+  return host;
+}
+
 export function validateRemoteTarget(value: RemoteTarget): RemoteTarget {
   if (!value || typeof value.host !== 'string' || typeof value.dshRoot !== 'string') {
     throw new Error('RemoteTarget must have string host and dshRoot');
   }
   const { host, dshRoot } = value;
-
-  if (host.length === 0) throw new Error('host must not be empty');
-  if (dshRoot.length === 0) throw new Error('dshRoot must not be empty');
-
-  if (containsControlChars(host) || host.includes('\u0000')) {
-    throw new Error(`invalid host: contains control characters`);
-  }
-  if (containsControlChars(dshRoot) || dshRoot.includes('\u0000')) {
-    throw new Error(`invalid dshRoot: contains control characters`);
-  }
-
-  if (!HOST_RE.test(host)) {
-    throw new Error(`invalid host: ${JSON.stringify(host)} does not match ${HOST_RE}`);
-  }
-
-  // Host must not contain whitespace or shell metachars (redundant with HOST_RE but explicit)
-  if (containsWhitespace(host) || containsShellMeta(host) || host.includes('=')) {
-    throw new Error(`invalid host: ${JSON.stringify(host)} contains illegal characters`);
-  }
+  validateHost(host);
 
   if (!ABSOLUTE_RE.test(dshRoot)) {
     throw new Error(`invalid dshRoot: ${JSON.stringify(dshRoot)} does not match ${ABSOLUTE_RE}`);

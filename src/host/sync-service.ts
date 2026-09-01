@@ -22,7 +22,7 @@ import { mergeDelimited } from './merge.js';
 import { mergeSessionBuffers } from './session-plan.js';
 import { snapshotFile } from './snapshot.js';
 import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview } from './sync-plan.js';
-import { normalizeEligiblePath, validateRemoteTarget } from './validation.js';
+import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
 import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction } from './sync-types.js';
 import { createProcessRunner, type ProcessRunner } from './process-runner.js';
 import { createTransport, type SyncTransport } from './transport.js';
@@ -147,6 +147,12 @@ export class SyncService {
   }
 
   async checkConnection(): Promise<ConnectionStatus> {
+    // Validate the host before any spawn so an unsafe host can never reach ssh.
+    try {
+      validateHost(this.remote);
+    } catch (e: any) {
+      return { ok: false, host: this.remote, error: e?.message ?? 'invalid host' };
+    }
     const start = Date.now();
     try {
       const res = await this.runner.run('ssh', ['-o', 'ConnectTimeout=5', '-o', 'BatchMode=yes', this.remote, 'echo ok'], { timeoutMs: 5000 });
