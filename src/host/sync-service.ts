@@ -21,7 +21,7 @@ import { randomBytes } from 'node:crypto';
 import { mergeDelimited } from './merge.js';
 import { mergeSessionBuffers } from './session-plan.js';
 import { snapshotFile } from './snapshot.js';
-import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview } from './sync-plan.js';
+import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview, storePreview } from './sync-plan.js';
 import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
 import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction } from './sync-types.js';
 import { createProcessRunner, type ProcessRunner } from './process-runner.js';
@@ -98,6 +98,7 @@ export interface SyncServiceOpts {
   localDsh?: string;
   remote?: string;
   remoteDsh?: string;
+  previewDir?: string;
   fs?: any;
   runner?: ProcessRunner;
   transport?: SyncTransport;
@@ -111,6 +112,7 @@ export class SyncService {
   localDsh: string;
   remote: string;
   remoteDsh: string;
+  previewDir: string;
   fs: any;
   runner: ProcessRunner;
   transport: SyncTransport;
@@ -119,6 +121,8 @@ export class SyncService {
     this.localDsh = opts.localDsh || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
     this.remote = opts.remote || process.env.REMOTE_HOST || process.env.REMOTE || 'kai@ssh.ddtcorex.com';
     this.remoteDsh = opts.remoteDsh || process.env.REMOTE_DSH_PATH || '~/.dsh';
+    // Sidecar preview store shared by every CLI process (preview -> separate apply run).
+    this.previewDir = opts.previewDir ?? path.join(this.localDsh, 'dsh-maestro-sync', 'previews');
     this.fs = opts.fs || nodeFs;
     this.runner = opts.runner ?? createProcessRunner();
     this.transport = opts.transport ?? createTransport(this.runner);
@@ -370,6 +374,8 @@ export class SyncService {
     const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth();
     try {
       const preview = await buildPreview(localSnapshots, remoteSnapshots, direction, localContents, remoteContents);
+      // persist so a separate CLI apply process can consume this preview
+      storePreview(preview, direction, this.previewDir);
       return { ...preview, connection, remoteHost: this.remote };
     } finally {
       cleanup();
@@ -490,7 +496,7 @@ export class SyncService {
    */
   async apply(req: ApplyRequest): Promise<ApplyResult> {
     this.assertApplyRequest(req);
-    const preview = getPreview(req.previewId);
+    const preview = getPreview(req.previewId, this.previewDir);
     if (!preview) throw syncFailure('validate', 'STALE_PREVIEW', 'preview not found or expired (60s)');
     const storedDir = getPreviewDirection(req.previewId);
     if (storedDir && storedDir !== req.direction) {
@@ -596,7 +602,7 @@ export class SyncService {
       }
 
       // A preview is invalidated by any apply attempt that passed validation.
-      deletePreview(req.previewId);
+      deletePreview(req.previewId, this.previewDir);
       return { ok: failures.length === 0, revision: fresh.revision, summary: fresh.summary, committed, failures };
     } finally {
       cleanup();
