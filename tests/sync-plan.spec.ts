@@ -3,6 +3,10 @@ import { buildPlan, buildPreview, clearPreviews, revisionFrom } from '../src/hos
 import { SyncService } from '../src/host/sync-service.js';
 import type { FileSnapshot } from '../src/host/sync-types.js';
 import { createFakeRemote } from './helpers/fake-transport.js';
+import { makeSessionBuffer } from './helpers/zstd.js';
+import { constants, zstdCompressSync } from 'node:zlib';
+
+const makeSessionFrame = (text: string): Buffer => zstdCompressSync(text, { params: { [constants.ZSTD_c_checksumFlag]: 1 } } as any);
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -29,6 +33,26 @@ describe('sync-plan', () => {
     expect(plan.summary.skipped).toBe(1);
     expect(plan.actions[0].action).toBe('skip');
     expect(plan.actions[0].reason).toMatch(/identical/);
+  });
+
+  it('classifies byte-different but content-equal files as skip (converges)', async () => {
+    // two zstd artifacts with the same lines but different frame layouts (header+
+    // combined body vs one frame per event) — same content, different bytes.
+    const header = '{"type":"session","version":1,"id":"s1","createdAt":1,"delegationDepth":0,"cwd":"/tmp/x"}';
+    const combined = makeSessionBuffer(header, ['{"seq":1}', '{"seq":2}']);
+    const perEvent = Buffer.concat([
+      makeSessionFrame(header + '\n'),
+      makeSessionFrame('{"seq":1}\n'),
+      makeSessionFrame('{"seq":2}\n'),
+    ]);
+    expect(combined.equals(perEvent)).toBe(false); // bytes really differ
+    const localSnap: FileSnapshot = { path: 'sessions/a/b/session.jsonl.zstd', sha256: 'l', size: combined.length, kind: 'session' };
+    const remoteSnap: FileSnapshot = { path: 'sessions/a/b/session.jsonl.zstd', sha256: 'r', size: perEvent.length, kind: 'session' };
+    const plan = await buildPlan([localSnap], [remoteSnap], 'pull', new Map([['sessions/a/b/session.jsonl.zstd', combined]]), new Map([['sessions/a/b/session.jsonl.zstd', perEvent]]));
+    const act = plan.actions.find((a) => a.path === 'sessions/a/b/session.jsonl.zstd')!;
+    expect(act.action).toBe('skip');
+    expect(act.reason).toMatch(/no new entries/i);
+    expect(plan.summary.skipped).toBe(1);
   });
 
   it('dispatches markdown to mergeDelimited, jsonl to exact-line union', async () => {
