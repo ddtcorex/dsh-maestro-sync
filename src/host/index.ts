@@ -10,6 +10,19 @@ import { loadSyncConfig } from './config.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
 
+// Carrier helpers — dsh-client-connection decodes every RPC response as
+// { ok: true, value } | { ok: false, error: { code, message, details } }
+// (same shape as dsh-maestro-jobs rpc.ts). A handler MUST return this exact
+// shape; returning { ok: true, ...flatFields } yields value: undefined on the
+// browser side because the connection reads result.value.
+function okCarrier<T>(value: T): { ok: true; value: T } {
+  return { ok: true, value };
+}
+
+function failCarrier(message: string, code = 'maestro-sync/rpc', details: Record<string, unknown> = {}): { ok: false; error: { code: string; message: string; details: object } } {
+  return { ok: false, error: { code, message, details } };
+}
+
 /**
  * Best-effort tunnel profile restore after a confirmed apply.
  * Mirrors sync-harness.sh apply_local_tunnel_profile: re-patches
@@ -211,46 +224,48 @@ export default {
         RPC_CHANNEL,
         async (method: string, args: any) => {
           const svc = await makeService();
-          switch (String(method)) {
-            case 'pull':
-            case 'push': {
-              // preview-only compatibility: no argument (including dryRun) can apply
-              const preview = await svc.preview({ direction: method === 'push' ? 'push' : 'pull' });
-              return { ok: true, previewId: preview.previewId, revision: preview.revision, expiresAt: preview.expiresAt, summary: preview.summary };
-            }
-            case 'status': {
-              if (args && typeof args.bucket === 'string') {
-                const page = await svc.statusPage({ bucket: args.bucket, cursor: args.cursor, limit: args.limit });
-                return { ok: true, ...page };
+          try {
+            switch (String(method)) {
+              case 'pull':
+              case 'push': {
+                // preview-only compatibility: no argument (including dryRun) can apply
+                const preview = await svc.preview({ direction: method === 'push' ? 'push' : 'pull' });
+                return okCarrier({ previewId: preview.previewId, revision: preview.revision, expiresAt: preview.expiresAt, summary: preview.summary });
               }
-              const r = await svc.status();
-              return { ok: true, remoteHost: r.remoteHost, connection: r.connection, localOnly: r.localOnly, remoteOnly: r.remoteOnly, both: r.both };
-            }
-            case 'check': {
-              const r = await svc.checkConnection();
-              return { ok: true, connection: r, remoteHost: r.host };
-            }
-            case 'preview': {
-              const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
-              const r = await svc.preview({ direction: dir });
-              return { ok: true, previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, connection: r.connection, remoteHost: r.remoteHost };
-            }
-            case 'apply': {
-              const previewId = args && (args as any).previewId;
-              const direction = args && (args as any).direction === 'push' ? 'push' : 'pull';
-              const confirm = args && (args as any).confirm;
-              if (confirm !== true) return { ok: false, error: 'apply requires confirm:true' };
-              if (!previewId || typeof previewId !== 'string') return { ok: false, error: 'apply requires previewId' };
-              try {
+              case 'status': {
+                if (args && typeof args.bucket === 'string') {
+                  const page = await svc.statusPage({ bucket: args.bucket, cursor: args.cursor, limit: args.limit });
+                  return okCarrier({ total: page.total, offset: page.offset, limit: page.limit, files: page.files, nextCursor: page.nextCursor, connection: page.connection, remoteHost: page.remoteHost });
+                }
+                const r = await svc.status();
+                return okCarrier({ remoteHost: r.remoteHost, connection: r.connection, localOnly: r.localOnly, remoteOnly: r.remoteOnly, both: r.both });
+              }
+              case 'check': {
+                const r = await svc.checkConnection();
+                return okCarrier({ connection: r, remoteHost: r.host });
+              }
+              case 'preview': {
+                const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
+                const r = await svc.preview({ direction: dir });
+                return okCarrier({ previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, actions: r.actions, summary: r.summary, connection: r.connection, remoteHost: r.remoteHost });
+              }
+              case 'apply': {
+                const previewId = args && (args as any).previewId;
+                const direction = args && (args as any).direction === 'push' ? 'push' : 'pull';
+                const confirm = args && (args as any).confirm;
+                if (confirm !== true) return failCarrier('apply requires confirm:true');
+                if (!previewId || typeof previewId !== 'string') return failCarrier('apply requires previewId');
                 const r = await svc.apply({ previewId, direction, confirm: true });
                 if (r.ok) await restoreTunnelProfile();
-                return { ok: r.ok, revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures };
-              } catch (e: any) {
-                return { ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase };
+                return okCarrier({ revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures });
               }
+              default:
+                return failCarrier('unknown method: ' + String(method));
             }
-            default:
-              return { ok: false, error: 'unknown method: ' + String(method) };
+          } catch (e: any) {
+            const details: Record<string, unknown> = {};
+            if (e?.phase) details.phase = e?.phase;
+            return failCarrier(e?.message ?? String(e), e?.code ?? 'maestro-sync/rpc', details);
           }
         },
         { authority: 'loopback' },

@@ -48,15 +48,18 @@ export function useSync(ctx: any) {
     remoteOnly: { files: [], total: 0, next: null },
   })
 
-  // dsh-client-connection wraps every RPC response in the carrier shape
-  // { ok: true, value } | { ok: false, error } — unwrap to the payload, keep
-  // the handler's own ok/error semantics for failures.
+  // dsh-client-connection decodes every RPC response as the carrier shape
+  // { ok: true, value } | { ok: false, error: { code, message, details } }.
+  // Unwrap to the payload; normalize the failure error to a string.
   const call = React.useCallback(async (method: string, payload: any): Promise<any> => {
     const conn = (ctx as any).connection ?? (ctx as any).get?.('connection')
     if (!conn?.rpc?.call) throw new Error('RPC not available')
     const res: any = await conn.rpc.call(RPC_CHANNEL, method, payload)
-    if (res && typeof res === 'object' && 'ok' in res && 'value' in res) {
-      return res.ok ? res.value : { ok: false, error: res.error ?? 'RPC failed' }
+    if (res && typeof res === 'object' && 'ok' in res) {
+      if (res.ok) return res.value
+      const err = res.error
+      if (typeof err === 'string') return { ok: false, error: err }
+      return { ok: false, error: err?.message ?? 'RPC failed', code: typeof err?.code === 'string' ? err.code : undefined }
     }
     return res
   }, [ctx])
@@ -65,7 +68,7 @@ export function useSync(ctx: any) {
     async (bucket: Bucket, cursor: number) => {
       try {
         const res: any = await call('status', { bucket, cursor, limit: 10 })
-        if (!res?.ok) return
+        if (!res) return
         setPages((prev) => ({
           ...prev,
           [bucket]: {

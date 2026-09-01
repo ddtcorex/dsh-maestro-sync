@@ -81,8 +81,9 @@ describe('host', () => {
       remoteHost: 'h',
     } as any);
     const { rpcHandler } = await bootPlugin();
-    const page = await rpcHandler('status', { bucket: 'localOnly', cursor: 0, limit: 5 });
-    expect(page.ok).toBe(true);
+    const res = await rpcHandler('status', { bucket: 'localOnly', cursor: 0, limit: 5 });
+    expect(res.ok).toBe(true);
+    const page = res.value;
     expect(page.nextCursor).toBe(5);
     expect(page.files.length).toBe(5);
     expect(JSON.stringify(page).length).toBeLessThan(64 * 1024);
@@ -94,8 +95,8 @@ describe('host', () => {
     vi.spyOn(SyncService.prototype, 'apply').mockRejectedValue(Object.assign(new Error('preview not found or expired (60s)'), { code: 'STALE_PREVIEW', phase: 'validate' }));
     const res = await rpcHandler('apply', { previewId: 'bad', direction: 'pull', confirm: true });
     expect(res.ok).toBe(false);
-    expect(res.code).toBe('STALE_PREVIEW');
-    expect(res.phase).toBe('validate');
+    expect(res.error.code).toBe('STALE_PREVIEW');
+    expect(res.error.details.phase).toBe('validate');
     vi.restoreAllMocks();
   });
 

@@ -154,7 +154,7 @@ describe('preview/apply contract', () => {
     const resPreview = await rpcHandler('preview', { direction: 'pull' });
     expect(previewSpy).toHaveBeenCalledWith({ direction: 'pull' });
     expect(resPreview.ok).toBe(true);
-    expect(resPreview.previewId).toBeDefined();
+    expect(resPreview.value.previewId).toBeDefined();
 
     const resApply = await rpcHandler('apply', { previewId: fakePreview.previewId, direction: 'pull', confirm: true });
     expect(applySpy).toHaveBeenCalledWith({ previewId: fakePreview.previewId, direction: 'pull', confirm: true });
