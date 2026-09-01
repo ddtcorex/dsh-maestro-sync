@@ -105,7 +105,10 @@ export class SshRsyncTransport implements SyncTransport {
       const result = await this.runner.run(
         'rsync',
         ['-az', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
-        { timeoutMs: 120000 },
+        // SSH transfers of hundreds of small session files need more than 2 min
+        // on real links (3.5s latency × N round-trips); 5 min keeps preview/apply
+        // usable while still failing closed when the link is actually down.
+        { timeoutMs: 300000 },
       );
       if (result.exitCode !== 0) {
         throw Object.assign(new Error(`stage failed: ${result.stderr.toString()}`), failure('stage', 'STAGE_FAILED', result.stderr.toString()));
@@ -130,7 +133,7 @@ export class SshRsyncTransport implements SyncTransport {
       const result = await this.runner.run(
         'rsync',
         ['-az', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
-        { timeoutMs: 120000 },
+        { timeoutMs: 300000 },
       );
       if (result.exitCode !== 0) {
         throw Object.assign(new Error(`upload failed: ${result.stderr.toString()}`), failure('publish', 'UPLOAD_FAILED', result.stderr.toString()));
