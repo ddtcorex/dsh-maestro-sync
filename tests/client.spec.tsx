@@ -93,7 +93,7 @@ describe('SyncPanel', () => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       if (method === 'preview') return carrier(makePreview());
-      if (method === 'apply') return { ok: true, revision: 'rev1', summary, committed: ['memories/daily/2026-08-29.md'], failures: [] };
+      if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: ['memories/daily/2026-08-29.md'], failures: [] });
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
@@ -115,7 +115,7 @@ describe('SyncPanel', () => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       if (method === 'preview') return carrier(makePreview());
-      if (method === 'apply') return { ok: false, error: 'inventory changed since preview', code: 'STALE_PREVIEW' };
+      if (method === 'apply') return { ok: false, error: { code: 'STALE_PREVIEW', message: 'inventory changed since preview', details: {} } };
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
