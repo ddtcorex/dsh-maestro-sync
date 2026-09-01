@@ -1,0 +1,40 @@
+name: Feature Request
+description: Suggest a new feature or improvement to dsh-maestro-sync.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please search existing issues and check `AGENTS.md` for the Superpowers 3-phase workflow.
+        For questions, contact kaido4492@gmail.com.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Preview / apply semantics
+        - Transport / staging / remote agent
+        - Session Zstd handling
+        - CLI / sync-harness.sh wrapper
+        - Settings UI
+        - Documentation / DX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve? What is the use case?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the change. Preserve the safety contract (preview read-only, apply-only mutation, Buffer-only zstd, argv-only transport).
+    validations:
+      required: true
