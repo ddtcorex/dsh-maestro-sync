@@ -75,6 +75,17 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
           fs.writeFileSync(full, buf);
         }
       },
+      hashes: async (target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void) => {
+        const out: { path: string; sha256: string; size: number }[] = [];
+        for (const rel of paths) {
+          const buf = remote.get(rel);
+          if (buf === undefined) continue;
+          const entry = { path: rel, sha256: sha256(buf), size: buf.length };
+          out.push(entry);
+          onFile?.(entry);
+        }
+        return out;
+      },
       upload: async (target: RemoteTarget, source: string, paths: readonly string[], operationId: string) => {
         if (result.failUploadAfter !== undefined && result.calls.upload.length >= result.failUploadAfter) {
           throw Object.assign(new Error('upload failed (injected)'), { phase: 'publish', code: 'UPLOAD_FAILED' });

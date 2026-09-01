@@ -153,6 +153,24 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
         </Button>
       </div>
 
+      {/* Preview progress — shows the session file currently being counted */}
+      {busy && s.progress ? (
+        <div data-sync-progress="" role="status" aria-live="polite" data-testid="sync-progress">
+          <span data-sync-progress-meta="">
+            {s.progress.phase === 'hashing'
+              ? `Reviewing sessions ${s.progress.current}/${s.progress.total}${s.progress.file ? ` — ${formatFile(s.progress.file).path}` : ''}`
+              : s.progress.phase === 'staging'
+                ? `Staging files ${s.progress.current}/${s.progress.total}`
+                : s.progress.phase === 'planning'
+                  ? 'Building the exact plan…'
+                  : 'Listing both machines…'}
+          </span>
+          <span data-sync-progress-track="" role="progressbar" aria-valuemin={0} aria-valuemax={s.progress.total} aria-valuenow={s.progress.current}>
+            <span data-sync-progress-fill="" style={{ width: `${s.progress.total > 0 ? Math.min(100, Math.round((s.progress.current / s.progress.total) * 100)) : 0}%` }} />
+          </span>
+        </div>
+      ) : null}
+
       {/* Results + errors (announced) */}
       {result ? (
         <div data-sync-notice="" data-tone={result.ok ? 'ok' : 'bad'} role="status" aria-live="polite">

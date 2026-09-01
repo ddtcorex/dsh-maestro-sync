@@ -33,16 +33,22 @@ function statusRpc() {
           : ['sessions/abc123/xyz.jsonl.zstd'];
       return carrier({ ok: true, total: bucketFiles.length, offset: args?.cursor ?? 0, limit: 10, files: bucketFiles, nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
     }
-    if (method === 'preview') {
+    if (method === 'previewStart') {
+      return carrier({ jobId: 'job1' });
+    }
+    if (method === 'previewStatus') {
       return carrier({
-        ok: true,
-        previewId: PREVIEW_ID,
-        revision: 'rev1',
-        expiresAt: new Date(Date.now() + 60000).toISOString(),
-        actions: [{ path: 'memories/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
-        summary,
-        connection: { ok: true, host: 'sync-host' },
-        remoteHost: 'sync-host',
+        status: 'done',
+        preview: {
+          ok: true,
+          previewId: PREVIEW_ID,
+          revision: 'rev1',
+          expiresAt: new Date(Date.now() + 60000).toISOString(),
+          actions: [{ path: 'memories/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
+          summary,
+          connection: { ok: true, host: 'sync-host' },
+          remoteHost: 'sync-host',
+        },
       });
     }
     return carrier({ ok: true });
@@ -92,6 +98,57 @@ describe('SyncPanel file lists', () => {
     expect(dialog.textContent).toMatch(/1 new entry/);
     const applyCalls = rpc.mock.calls.filter(([, m]: any) => m === 'apply');
     expect(applyCalls.length).toBe(0);
+  });
+
+  it('shows preview progress against a running job, then renders session counts in the dialog', async () => {
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'status' && !args?.bucket) {
+        return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 1, both: 3 });
+      }
+      if (method === 'status') {
+        return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      }
+      if (method === 'previewStart') return carrier({ jobId: 'job1' });
+      if (method === 'previewStatus') {
+        // first poll: running with a session file being counted
+        if (!rpc._settled) {
+          rpc._settled = true;
+          return carrier({ status: 'running', progress: { phase: 'hashing', current: 3, total: 71, file: 'sessions/abc/xyz/session.jsonl.zstd' } });
+        }
+        return carrier({
+          status: 'done',
+          preview: {
+            ok: true,
+            previewId: PREVIEW_ID,
+            revision: 'rev1',
+            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            actions: [{ path: 'memories/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
+            summary,
+            sessionCounts: { added: 5, updated: 12, deleted: 2, identical: 4 },
+            connection: { ok: true, host: 'sync-host' },
+            remoteHost: 'sync-host',
+          },
+        });
+      }
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('sync-preview-pull'));
+    // progress bar appears while the job is hashing sessions
+    await waitFor(() => expect(screen.getByTestId('sync-progress')).toBeInTheDocument());
+    expect(screen.getByTestId('sync-progress').textContent).toContain('session.jsonl.zstd');
+    expect(screen.getByTestId('sync-progress').textContent).toMatch(/3\/71/);
+    // once settled, the dialog summarises sessions (5 added · 12 updated · 2 deleted · 4 identical)
+    const dialog = await screen.findByRole('dialog');
+    const counts = dialog.querySelector('[data-sync-sessioncounts]');
+    expect(counts).not.toBeNull();
+    expect(counts!.textContent).toContain('5 added');
+    expect(counts!.textContent).toContain('12 updated');
+    expect(counts!.textContent).toContain('2 deleted');
+    expect(counts!.textContent).toContain('4 identical');
+    // the memory action still renders as a row
+    expect(dialog.querySelectorAll('[data-action-row]').length).toBe(1);
   });
 
   it('shows the shared Maestro logo in the card header', async () => {

@@ -37,6 +37,15 @@ function makeCtx(rpc: any) {
 
 const carrier = (value: any) => ({ ok: true, value });
 
+/** Async preview flow: previewStart returns a jobId, previewStatus settles with the preview. */
+const previewFlow = (settled: any, first: 'running' | 'done' = 'done') => ({
+  'previewStart': () => carrier({ jobId: 'job1' }),
+  'previewStatus': () =>
+    first === 'running'
+      ? carrier({ status: 'running', progress: { phase: 'hashing', current: 1, total: 2, file: 'sessions/abc/x.jsonl.zstd' } })
+      : carrier({ status: 'done', preview: settled }),
+})
+
 function statusCalls(rpc: any) {
   return rpc.mock.calls.filter(([c]: any) => c === '/dsh-maestro-sync').map(([, m]: any) => m);
 }
@@ -49,7 +58,9 @@ describe('SyncPanel', () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
-      if (method === 'preview') return carrier(makePreview());
+      const f = previewFlow(makePreview());
+      if (method === 'previewStart') return f['previewStart']();
+      if (method === 'previewStatus') return f['previewStatus']();
       if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: [], failures: [] });
       return { ok: true };
     });
@@ -74,7 +85,9 @@ describe('SyncPanel', () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
-      if (method === 'preview') return carrier(makePreview());
+      const f = previewFlow(makePreview());
+      if (method === 'previewStart') return f['previewStart']();
+      if (method === 'previewStatus') return f['previewStatus']();
       if (method === 'apply') return carrier({ ok: true });
       return { ok: true };
     });
@@ -92,7 +105,9 @@ describe('SyncPanel', () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
-      if (method === 'preview') return carrier(makePreview());
+      const f = previewFlow(makePreview());
+      if (method === 'previewStart') return f['previewStart']();
+      if (method === 'previewStatus') return f['previewStatus']();
       if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: ['memories/daily/2026-08-29.md'], failures: [] });
       return { ok: true };
     });
@@ -114,7 +129,9 @@ describe('SyncPanel', () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
-      if (method === 'preview') return carrier(makePreview());
+      const f = previewFlow(makePreview());
+      if (method === 'previewStart') return f['previewStart']();
+      if (method === 'previewStatus') return f['previewStatus']();
       if (method === 'apply') return { ok: false, error: { code: 'STALE_PREVIEW', message: 'inventory changed since preview', details: {} } };
       return { ok: true };
     });
@@ -135,7 +152,9 @@ describe('SyncPanel', () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
-      if (method === 'preview') return carrier(makePreview(actions));
+      const f = previewFlow(makePreview(actions));
+      if (method === 'previewStart') return f['previewStart']();
+      if (method === 'previewStatus') return f['previewStatus']();
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));

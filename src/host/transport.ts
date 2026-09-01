@@ -20,6 +20,12 @@ export interface SyncTransport {
   compare(target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer>;
   /** Rsync one batched --files-from stage of validated relative paths into `destination`. */
   stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void>;
+  /**
+   * Checksum + size every remote path without transferring content (one ssh,
+   * streaming one "sha\tsize\tpath" line per file as each completes). Used by
+   * preview to count session changes without rsync staging remote bytes.
+   */
+  hashes(target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void): Promise<{ path: string; sha256: string; size: number }[]>;
   /** Upload materialized bytes for one operation into the remote private stage dir. */
   upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void>;
   /** Install the fixed remote CAS helper under `<root>/.maestro-sync/bin`. */
@@ -116,6 +122,40 @@ export class SshRsyncTransport implements SyncTransport {
     } finally {
       await rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
+  }
+
+  async hashes(target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void): Promise<{ path: string; sha256: string; size: number }[]> {
+    const validated = validateRemoteTarget(target);
+    if (paths.length === 0) return [];
+    // One ssh session; relative paths stream over stdin inside `while read`
+    // (quotable, no interpolation into the shell), so every eligible file — no
+    // matter its name — is hashed safely. Each completed file emits exactly one
+    // "sha\tsize\tpath" line, which the runner delivers as a progress tick.
+    const cmd =
+      `cd ${validated.dshRoot} && while IFS= read -r f; do ` +
+      `[ -n "$f" ] || continue; ` +
+      `h=$(sha256sum -- "$f" 2>/dev/null | awk '{print $1}'); ` +
+      `s=$(wc -c < "$f" 2>/dev/null || echo 0); ` +
+      `printf '%s\\t%s\\t%s\\n' "$h" "$s" "$f"; ` +
+      `done`;
+    const out: { path: string; sha256: string; size: number }[] = [];
+    const result = await this.runner.run('ssh', [validated.host, cmd], {
+      input: Buffer.from(paths.join('\n') + '\n', 'utf-8'),
+      timeoutMs: 300000,
+      onLine: (line) => {
+        const [sha256, sizeRaw, ...rest] = line.split('\t');
+        const p = rest.join('\t');
+        const size = Number(sizeRaw);
+        if (!sha256 || !p || !Number.isFinite(size)) return;
+        const entry = { path: p, sha256, size };
+        out.push(entry);
+        onFile?.(entry);
+      },
+    });
+    if (result.exitCode !== 0) {
+      throw Object.assign(new Error(`hashes failed: ${result.stderr.toString()}`), failure('snapshot', 'HASH_FAILED', result.stderr.toString()));
+    }
+    return out;
   }
 
   async upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void> {

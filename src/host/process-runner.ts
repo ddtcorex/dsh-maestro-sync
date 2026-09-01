@@ -7,14 +7,14 @@ export interface ProcessResult {
 }
 
 export interface ProcessRunner {
-  run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number }): Promise<ProcessResult>;
+  run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; onLine?: (line: string) => void }): Promise<ProcessResult>;
 }
 
 /** Maximum combined output before we kill the child (fail-closed, avoids OOM). */
 const MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 
 export class NodeProcessRunner implements ProcessRunner {
-  async run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number }): Promise<ProcessResult> {
+  async run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; onLine?: (line: string) => void }): Promise<ProcessResult> {
     return new Promise<ProcessResult>((resolve, reject) => {
       // argv-only, never shell — caller may pass filenames with spaces/metachars as single argv items
       const child = spawn(file, args as string[], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -25,6 +25,8 @@ export class NodeProcessRunner implements ProcessRunner {
       let timeout: NodeJS.Timeout | undefined;
       let timedOut = false;
       let killedForBounds = false;
+      // line-buffered stdout delivery for progress callbacks (ssh sha256sum streaming)
+      let lineBuf = '';
 
       const killForBounds = () => {
         if (killedForBounds) return;
@@ -39,6 +41,16 @@ export class NodeProcessRunner implements ProcessRunner {
         }, options.timeoutMs);
       }
 
+      const deliverLines = () => {
+        if (!options?.onLine) return;
+        let idx: number;
+        while ((idx = lineBuf.indexOf('\n')) !== -1) {
+          const line = lineBuf.slice(0, idx).replace(/\r$/, '');
+          lineBuf = lineBuf.slice(idx + 1);
+          if (line.trim()) options.onLine?.(line);
+        }
+      };
+
       child.stdout?.on('data', (chunk: Buffer) => {
         const buf = Buffer.from(chunk);
         stdoutLen += buf.length;
@@ -47,6 +59,10 @@ export class NodeProcessRunner implements ProcessRunner {
           return;
         }
         stdoutChunks.push(buf);
+        if (options?.onLine) {
+          lineBuf += buf.toString('utf-8');
+          deliverLines();
+        }
       });
       child.stderr?.on('data', (chunk: Buffer) => {
         const buf = Buffer.from(chunk);

@@ -43,6 +43,8 @@ export function useSync(ctx: any) {
   const [previewDirection, setPreviewDirection] = React.useState<'pull' | 'push'>('pull')
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   const [actionLimit, setActionLimit] = React.useState(5)
+  const [progress, setProgress] = React.useState<{ phase: string; current: number; total: number; file?: string } | null>(null)
+  const cancelledRef = React.useRef(false)
   const [pages, setPages] = React.useState<Record<Bucket, PageState>>({
     localOnly: { files: [], total: 0, next: null },
     remoteOnly: { files: [], total: 0, next: null },
@@ -127,19 +129,48 @@ export function useSync(ctx: any) {
       setError('')
       setResult(null)
       setActionLimit(5)
+      setProgress({ phase: 'listing', current: 0, total: 1 })
       try {
-        const res: any = await call('preview', { direction })
-        if (res?.ok === false) {
-          setError(res?.error ?? 'Preview failed')
+        // Asynchronous count-only preview: start the job, poll progress (the
+        // host hashes sessions over ssh, one progress tick per file) until the
+        // preview settles, then open the confirmation dialog.
+        const start: any = await call('previewStart', { direction })
+        const jobId = start?.jobId
+        if (!jobId) {
+          setError(start?.error ?? 'Preview failed to start')
+          setProgress(null)
           return
         }
-        setPreview(res)
-        setPreviewDirection(direction)
-        setConfirmOpen(true)
+        let done = false
+        while (!done && !cancelledRef.current) {
+          const st: any = await call('previewStatus', { jobId })
+          if (st?.status === 'running' && st?.progress) {
+            setProgress({ phase: st.progress.phase, current: st.progress.current, total: st.progress.total, file: st.progress.file })
+          }
+          if (st?.status === 'done') {
+            if (st.preview) {
+              setPreview(st.preview)
+              setPreviewDirection(direction)
+              setConfirmOpen(true)
+            } else {
+              setError('Preview finished without a result')
+            }
+            done = true
+          } else if (st?.status === 'error') {
+            setError(st.error ?? 'Preview failed')
+            done = true
+          } else if (st?.ok === false) {
+            setError(st.error ?? 'Preview failed')
+            done = true
+          } else {
+            await new Promise((r) => setTimeout(r, 700))
+          }
+        }
       } catch (e: any) {
         setError(e?.message ?? String(e))
       } finally {
         setBusy(false)
+        setProgress(null)
       }
     },
     [call],
@@ -200,6 +231,7 @@ export function useSync(ctx: any) {
     previewDirection,
     confirmOpen,
     actionLimit,
+    progress,
     pages,
     setActionLimit,
     setError,
