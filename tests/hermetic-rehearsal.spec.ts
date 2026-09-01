@@ -2,8 +2,9 @@
  * Hermetic two-root rehearsal (Task 8): real files, real Zstd artifacts, the
  * real remote-agent CAS script, no network.
  * Preview equals Apply; Pull then Push converge; a second preview is empty;
- * a changed remote hash is rejected as STALE_PREVIEW; excluded paths are never
- * read or copied.
+ * apply applies the freshest inventory (a live-changed DSH home never blocks
+ * with STALE_PREVIEW — CAS still rejects mid-write concurrent modification);
+ * excluded paths are never read or copied.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
@@ -121,16 +122,21 @@ describe('hermetic two-root rehearsal', () => {
       const secondPush = await svc.preview({ direction: 'push' });
       expect(secondPush.actions.every((a: any) => a.action === 'skip')).toBe(true);
 
-      // CAS: a remote target changed between preview and apply must be rejected
+      // a target that changed between preview and apply is applied against the
+      // freshest inventory (no STALE_PREVIEW) — the concurrent edit is merged
+      // into the publish, and CAS still rejects a MID-WRITE modification
       const livePreview = await svc.preview({ direction: 'push' });
       seed(localRoot, { [MD]: 'a\n§\nlocal1\n§\nremote2\n§\nnewer-local\n' });
       const plusPreview = await svc.preview({ direction: 'push' });
       expect(plusPreview.summary.merged).toBe(1);
-      // simulate concurrent remote modification
+      // remote changed after the preview was made — apply still runs on the current state
       fs.writeFileSync(path.join(remoteRoot, MD), 'a\n§\nconcurrent-edit\n');
-      await expect(svc.apply({ previewId: plusPreview.previewId, direction: 'push', confirm: true })).rejects.toMatchObject({ code: 'STALE_PREVIEW' });
-      // and the remote file keeps the concurrent content
-      expect(fs.readFileSync(path.join(remoteRoot, MD), 'utf-8')).toBe('a\n§\nconcurrent-edit\n');
+      const liveApplied = await svc.apply({ previewId: plusPreview.previewId, direction: 'push', confirm: true });
+      expect(liveApplied.ok).toBe(true);
+      // the concurrent edit is preserved (union merge, never overwritten silently)
+      const published = fs.readFileSync(path.join(remoteRoot, MD), 'utf-8');
+      expect(published).toContain('concurrent-edit');
+      expect(published).toContain('newer-local');
     } finally {
       cleanup();
     }
