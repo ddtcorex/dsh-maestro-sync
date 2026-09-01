@@ -92,10 +92,8 @@ async function queryStats(ws) {
         colCount: cols.length,
         visibleCols: Array.from(cols).filter((c) => getComputedStyle(c).display !== 'none').length,
         logo: !!document.querySelector('[data-maestro-logo]'),
-        title: syncCard ? (syncCard.querySelector('[data-sync-title]')?.textContent || '') : '',
+        title: syncCard ? (syncCard.querySelector('div')?.textContent || '').slice(0, 40) : '',
         statsTiles: document.querySelectorAll('[data-sync-stat]').length,
-        hasDash: !!document.querySelector('[data-sync-dash]'),
-        footerSyncTriggers: Array.from(document.querySelectorAll('button')).filter((b) => (b.getAttribute('aria-label') || '').includes('Maestro Sync')).length,
       };
     })()`,
   )
