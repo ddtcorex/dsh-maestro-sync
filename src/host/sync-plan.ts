@@ -268,14 +268,25 @@ export async function buildPlan(
           const localStr = localBuf.toString('utf-8');
           const remoteStr = remoteBuf.toString('utf-8');
           const { added: addedCount } = direction === 'pull' ? mergeDelimited(localStr, remoteStr) : mergeDelimited(remoteStr, localStr);
-          actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'content differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
-          merged++;
-          added += addedCount;
+          if (addedCount === 0) {
+            // same delimited entries, different bytes/order — nothing to add
+            actions.push({ path: p, action: 'skip', target, added: 0, reason: 'content-equal, no new entries', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+            skipped++;
+          } else {
+            actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'content differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+            merged++;
+            added += addedCount;
+          }
         } else if (p.endsWith('.jsonl')) {
           const addedCount = direction === 'pull' ? unionJsonlAdded(localBuf, remoteBuf) : unionJsonlAdded(remoteBuf, localBuf);
-          actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'content differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
-          merged++;
-          added += addedCount;
+          if (addedCount === 0) {
+            actions.push({ path: p, action: 'skip', target, added: 0, reason: 'content-equal, no new lines', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+            skipped++;
+          } else {
+            actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'content differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+            merged++;
+            added += addedCount;
+          }
         } else if (p.endsWith('.zstd')) {
           // Session handling is Buffer/path-only and preserves DSH standalone checksummed Zstd header frame.
           // Never convert Zstd bytes to UTF-8 string; use validated Zstd artifact API via session-plan.
@@ -285,9 +296,15 @@ export async function buildPlan(
               conflicts++;
             } else {
               const { added: addedCount } = direction === 'pull' ? mergeSessionBuffers(localBuf, remoteBuf) : mergeSessionBuffers(remoteBuf, localBuf);
-              actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'session differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
-              merged++;
-              added += addedCount;
+              if (addedCount === 0) {
+                // identical session lines under a (possibly different) zstd frame layout
+                actions.push({ path: p, action: 'skip', target, added: 0, reason: 'content-equal, no new entries', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+                skipped++;
+              } else {
+                actions.push({ path: p, action: 'merge', target, added: addedCount, reason: 'session differs, merge', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
+                merged++;
+                added += addedCount;
+              }
             }
           } catch (e: any) {
             actions.push({ path: p, action: 'conflict', target, added: 0, reason: e?.message ?? 'session merge failed', expectedTargetSha256: target === 'local' ? ls.sha256 : rs.sha256 });
