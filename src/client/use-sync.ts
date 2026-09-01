@@ -48,10 +48,17 @@ export function useSync(ctx: any) {
     remoteOnly: { files: [], total: 0, next: null },
   })
 
-  const call = React.useCallback((method: string, payload: any): Promise<any> => {
+  // dsh-client-connection wraps every RPC response in the carrier shape
+  // { ok: true, value } | { ok: false, error } — unwrap to the payload, keep
+  // the handler's own ok/error semantics for failures.
+  const call = React.useCallback(async (method: string, payload: any): Promise<any> => {
     const conn = (ctx as any).connection ?? (ctx as any).get?.('connection')
-    if (!conn?.rpc?.call) return Promise.reject(new Error('RPC not available'))
-    return conn.rpc.call(RPC_CHANNEL, method, payload) as Promise<any>
+    if (!conn?.rpc?.call) throw new Error('RPC not available')
+    const res: any = await conn.rpc.call(RPC_CHANNEL, method, payload)
+    if (res && typeof res === 'object' && 'ok' in res && 'value' in res) {
+      return res.ok ? res.value : { ok: false, error: res.error ?? 'RPC failed' }
+    }
+    return res
   }, [ctx])
 
   const loadPage = React.useCallback(
