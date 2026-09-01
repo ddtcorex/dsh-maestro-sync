@@ -35,6 +35,8 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
         </header>
         {isDisconnected ? (
           <div data-sync-empty="">Cannot check remote — SSH to {connection!.host} is not connected.</div>
+        ) : page.files.length === 0 && !page.loaded ? (
+          <div data-sync-loading="">Checking {heading.toLowerCase()}…</div>
         ) : page.files.length === 0 && !checking ? (
           <div data-sync-empty="">{empty}</div>
         ) : (
