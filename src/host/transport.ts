@@ -52,10 +52,14 @@ export class SshRsyncTransport implements SyncTransport {
   async list(target: RemoteTarget): Promise<Buffer> {
     const validated = validateRemoteTarget(target);
     // dshRoot is strictly validated (absolute, [A-Za-z0-9._-/], no meta), so it is
-    // safe as a single argv item of the remote `find` command. Discovered file names
-    // are never interpolated here — the manifest is staged via --files-from instead.
-    const remoteCmd = `find ${validated.dshRoot} -type f -print`;
-    const result = await this.runner.run('ssh', [validated.host, remoteCmd], { timeoutMs: 15000 });
+    // safe as argv items of the remote `find` command. Only the eligible subtrees
+    // are walked; node_modules/profiles/.supervisor are pruned so a real ~/.dsh
+    // lists in seconds. Discovered file names are never interpolated here — the
+    // manifest is staged via --files-from instead.
+    const remoteCmd =
+      `find ${validated.dshRoot}/memories ${validated.dshRoot}/sessions ` +
+      `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print`;
+    const result = await this.runner.run('ssh', [validated.host, remoteCmd], { timeoutMs: 60000 });
     if (result.exitCode !== 0) {
       throw Object.assign(new Error(`list failed: ${result.stderr.toString()}`), failure('snapshot', 'LIST_FAILED', result.stderr.toString()));
     }

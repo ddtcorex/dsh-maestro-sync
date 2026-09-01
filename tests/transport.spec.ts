@@ -49,6 +49,20 @@ describe('transport', () => {
     expect(args.join(' ')).toContain('sync-host:/home/kai/.dsh/');
   });
 
+  it('list prunes heavy dirs so a real ~/.dsh lists in seconds', async () => {
+    const runner = makeRunner();
+    const transport = new SshRsyncTransport(runner);
+    await transport.list({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
+    const sshCalls = (runner.run as any).mock.calls.filter(([f]: any) => f === 'ssh');
+    expect(sshCalls.length).toBe(1);
+    const cmd = sshCalls[0][1].join(' ');
+    expect(cmd).toContain('/home/kai/.dsh/memories');
+    expect(cmd).toContain('/home/kai/.dsh/sessions');
+    expect(cmd).toContain('-prune');
+    expect(cmd).toContain('node_modules');
+    expect(cmd).not.toContain('find /home/kai/.dsh -type f');
+  });
+
   it('rejects unsafe remote target before spawn', async () => {
     const runner = makeRunner();
     const transport = new SshRsyncTransport(runner);
