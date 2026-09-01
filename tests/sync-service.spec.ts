@@ -74,6 +74,41 @@ describe('SyncService', () => {
     }
   });
 
+  it('statusPage buckets are action-based: remoteOnly includes both-side content differences', async () => {
+    const { localRoot, cleanup } = makeTempRoots('page-actions-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      // shared path with DIFFERENT content (remote newer) — a path-based bucket
+      // would hide it, but it is exactly what a pull would merge
+      fs.writeFileSync(path.join(localRoot, 'memories/daily/2026-09-01.md'), 'local-day\n');
+      // remote-only path (copy candidate)
+      const fake = createFakeRemote(
+        new Map<string, Buffer>([
+          ['memories/daily/2026-09-01.md', Buffer.from('remote-day\n')],
+          ['memories/daily/2026-09-02.md', Buffer.from('remote-new-day\n')],
+        ]),
+      );
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fs as any,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+      });
+      const page = await svc.statusPage({ bucket: 'remoteOnly', cursor: 0, limit: 10 });
+      // both the copy candidate (2026-09-02) and the content-diff (2026-09-01) appear
+      expect(page.files).toContain('memories/daily/2026-09-02.md');
+      expect(page.files).toContain('memories/daily/2026-09-01.md');
+      expect(page.total).toBe(2);
+      // localOnly bucket: the same content-diff is also a push candidate (merge)
+      const localPage = await svc.statusPage({ bucket: 'localOnly', cursor: 0, limit: 10 });
+      expect(localPage.files).toContain('memories/daily/2026-09-01.md');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('stages only change candidates: identical bytes are never transferred', async () => {
     const { localRoot, cleanup } = makeTempRoots('diffstage-');
     try {
