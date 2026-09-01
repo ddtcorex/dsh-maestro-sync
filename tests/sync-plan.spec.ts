@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildPlan, buildPreview, clearPreviews, revisionFrom } from '../src/host/sync-plan.js';
 import { SyncService } from '../src/host/sync-service.js';
 import type { FileSnapshot } from '../src/host/sync-types.js';
+import { createFakeRemote } from './helpers/fake-transport.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -77,45 +78,29 @@ describe('sync-plan', () => {
   });
 
   it('preview via SyncService marks merge and skip correctly (read-only, no copy/backup)', async () => {
-    const exec = vi.fn(async (cmd: string) => {
-      if (String(cmd).includes('echo ok')) return 'ok';
-      if (String(cmd).includes('find')) return 'memories/daily/2026-08-29.md\nmemories/shared.md\n';
-      return '';
-    });
-    // mock fs for local files
     const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-preview-'));
+    const stubRunner: any = { run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })) };
     try {
       fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md'), 'a\n§\nfoo\n');
       fs.writeFileSync(path.join(localRoot, 'memories', 'shared.md'), 'identical\n');
-
-      const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', exec: exec as any, fs: fs as any });
-      // spy fetchRemoteFile to return remote contents: daily has extra entry, shared identical
-      vi.spyOn(svc as any, 'fetchRemoteFile').mockImplementation(async (p: string) => {
-        if (p === 'memories/daily/2026-08-29.md') return 'a\n§\nfoo\n§\nbar\n';
-        if (p === 'memories/shared.md') return 'identical\n';
-        return '';
-      });
-      vi.spyOn(svc, 'checkConnection').mockResolvedValue({ ok: true, host: 'host', latencyMs: 1 });
-      // spy list methods to return filtered
-      vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/daily/2026-08-29.md', 'memories/shared.md']);
-      vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/daily/2026-08-29.md', 'memories/shared.md']);
-
-      // ensure copy not called
-      const copySpy = vi.fn();
-      (svc as any).copyRemoteFiles = copySpy;
-      const backupSpy = vi.fn();
-      (svc as any).atomicWriteWithBackup = backupSpy;
+      // remote has daily with one extra entry; shared is byte-identical
+      const fake = createFakeRemote(
+        new Map<string, Buffer>([
+          ['memories/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n§\nbar\n')],
+          ['memories/shared.md', Buffer.from('identical\n')],
+        ]),
+      );
+      const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
 
       const preview = await svc.preview({ direction: 'pull' });
       expect(preview.actions).toContainEqual(expect.objectContaining({ path: 'memories/daily/2026-08-29.md', action: 'merge', added: 1 }));
       expect(preview.summary.skipped).toBe(1);
       const skip = preview.actions.find((a: any) => a.path === 'memories/shared.md');
       expect(skip?.action).toBe('skip');
-      // preview must not have called copy/backup
-      expect(copySpy).not.toHaveBeenCalled();
-      expect(backupSpy).not.toHaveBeenCalled();
-      // previewId and expires
+      // preview must not have written to the live root
+      expect(fs.readFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md'), 'utf-8')).toBe('a\n§\nfoo\n');
+      // previewId and revision
       expect(preview.previewId).toBeDefined();
       expect(preview.revision).toBeDefined();
     } finally {
@@ -124,20 +109,13 @@ describe('sync-plan', () => {
   });
 
   it('skips identical bytes even when mtime differs via service preview', async () => {
-    const exec = vi.fn(async (cmd: string) => {
-      if (String(cmd).includes('echo ok')) return 'ok';
-      if (String(cmd).includes('find')) return 'memories/a.md\n';
-      return '';
-    });
     const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-skip-'));
+    const stubRunner: any = { run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })) };
     try {
       fs.mkdirSync(path.join(localRoot, 'memories'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, 'memories', 'a.md'), 'same content');
-      const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', exec: exec as any, fs: fs as any });
-      vi.spyOn(svc, 'checkConnection').mockResolvedValue({ ok: true, host: 'host', latencyMs: 1 });
-      vi.spyOn(svc, 'listLocalFiles').mockReturnValue(['memories/a.md']);
-      vi.spyOn(svc, 'listRemoteFiles').mockResolvedValue(['memories/a.md']);
-      vi.spyOn(svc as any, 'fetchRemoteFile').mockResolvedValue('same content');
+      const fake = createFakeRemote(new Map<string, Buffer>([['memories/a.md', Buffer.from('same content')]]));
+      const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
       const preview = await svc.preview({ direction: 'pull' });
       expect(preview.summary.skipped).toBe(1);
       expect(preview.actions[0].action).toBe('skip');
