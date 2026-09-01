@@ -701,13 +701,46 @@ export class SyncService {
     };
   }
 
-  /** Cursor-paged status page — bounded output, never a lexical slice of the full list. */
+  /**
+   * Cursor-paged status page — bounded output.
+   * Buckets are ACTION-based (like preview): `remoteOnly` lists every file a
+   * pull would bring in (remote-only paths + both-side content differences),
+   * `localOnly` lists what a push would send (local-only paths + content
+   * differences). A live DSH home keeps path lists mostly equal between the
+   * two machines while session content diverges, so path-only buckets would
+   * stay 0/0 and hide the real changes.
+   */
   async statusPage(opts: { bucket?: string; cursor?: number; limit?: number } = {}): Promise<StatusPage> {
     const st = await this.status();
-    const bucket = opts.bucket === 'remoteOnly' || opts.bucket === 'both' ? opts.bucket : 'localOnly';
-    const all = bucket === 'localOnly' ? st.localOnlyFiles : bucket === 'remoteOnly' ? st.remoteOnlyFiles : st.bothFiles;
+    const bucket = opts.bucket === 'remoteOnly' || opts.bucket === 'localOnly' ? opts.bucket : 'localOnly';
     const offset = Math.max(0, Math.trunc(opts.cursor ?? 0));
     const limit = Math.min(500, Math.max(1, Math.trunc(opts.limit ?? 100)));
+
+    // Which remote files differ in content (rsync -rcn: remote-only paths plus
+    // both-side checksum differences) — exactly the pull candidates. Reuses the
+    // remote paths already fetched by status() so this adds one compare pass.
+    let remoteChanged = new Set<string>();
+    try {
+      const target = await this.requireTarget();
+      const remotePaths = [...st.remoteOnlyFiles, ...st.bothFiles];
+      const compareOut = await this.transport.compare(target, this.localDsh, remotePaths);
+      remoteChanged = new Set(compareOut.toString('utf-8').split('\n').map((s) => s.trim()).filter(Boolean));
+    } catch {
+      // offline/compare failure → fall back to path-only buckets (may be empty)
+    }
+
+    let all: string[];
+    if (bucket === 'remoteOnly') {
+      // pull brings: remote-only paths (copy) + both-side content diffs (merge)
+      all = [...st.remoteOnlyFiles];
+      for (const p of st.bothFiles) if (remoteChanged.has(p)) all.push(p);
+    } else {
+      // push sends: local-only paths (copy) + content diffs on shared paths (merge)
+      all = [...st.localOnlyFiles];
+      for (const p of st.bothFiles) if (remoteChanged.has(p)) all.push(p);
+    }
+    all = [...new Set(all)].sort();
+
     const files = all.slice(offset, offset + limit);
     const nextCursor = offset + files.length < all.length ? offset + files.length : null;
     return { total: all.length, offset, limit, files, nextCursor, connection: st.connection, remoteHost: st.remoteHost };
