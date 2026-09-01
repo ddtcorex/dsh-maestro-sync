@@ -5,10 +5,10 @@ import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanS
 
 /**
  * Maestro Sync — the complete settings card (settings.section, id maestro-sync).
- * Mobile-first summary + the two paged file lists (Only here / Only there) so
- * everything lives in Settings — no separate dashboard surface. Keeps the
- * confirmation-first contract: Preview is read-only; apply exists only inside
- * the dialog bound to the live preview id (confirm:true).
+ * Mobile-first summary + the two paged file lists (Only here / Only there);
+ * everything lives in Settings. Keeps the confirmation-first contract: Preview
+ * is read-only; apply exists only inside the dialog bound to the live preview
+ * id (confirm:true).
  */
 export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)

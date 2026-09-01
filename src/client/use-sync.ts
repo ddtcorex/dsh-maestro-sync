@@ -6,8 +6,7 @@ import { RPC_CHANNEL } from './ui.js'
  * - Preview is read-only; apply exists only inside a confirmation dialog bound
  *   to the live preview id, with {confirm:true}. Escape cancels; nothing applies
  *   without confirmation.
- * - status pages three buckets (localOnly / both / remoteOnly) with cursors.
- * Used by both the compact settings card and the full Sync Dashboard overlay.
+ * - status pages two buckets (localOnly / remoteOnly) with cursors.
  */
 
 export interface SyncConnection {
