@@ -65,6 +65,8 @@ export function MaestroLogo(props: { outer?: number; size?: number; radius?: num
         border: '1px solid rgba(0, 0, 0, 0.08)',
         boxShadow: '0 0 0 1px var(--dsw-alias-border-l1)',
         boxSizing: 'border-box',
+        alignSelf: 'flex-start',
+        marginTop: 2,
       }}
     >
       <MaestroMark size={size} />

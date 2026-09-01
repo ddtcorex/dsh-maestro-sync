@@ -35,6 +35,8 @@ function makeCtx(rpc: any) {
   return { connection: { rpc: { call: rpc } }, get: () => undefined as any };
 }
 
+const carrier = (value: any) => ({ ok: true, value });
+
 function statusCalls(rpc: any) {
   return rpc.mock.calls.filter(([c]: any) => c === '/dsh-maestro-sync').map(([, m]: any) => m);
 }
@@ -45,10 +47,10 @@ describe('SyncPanel', () => {
   it('Preview Pull opens a confirmation dialog with exact actions; no apply before confirmation', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
-      if (method === 'status' && !args?.bucket) return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 };
-      if (method === 'status') return { ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
-      if (method === 'preview') return makePreview();
-      if (method === 'apply') return { ok: true, revision: 'rev1', summary, committed: [], failures: [] };
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'preview') return carrier(makePreview());
+      if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: [], failures: [] });
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
@@ -70,10 +72,10 @@ describe('SyncPanel', () => {
   it('cancelling the confirmation applies nothing and closes the dialog', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
-      if (method === 'status' && !args?.bucket) return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 };
-      if (method === 'status') return { ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
-      if (method === 'preview') return makePreview();
-      if (method === 'apply') return { ok: true };
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'preview') return carrier(makePreview());
+      if (method === 'apply') return carrier({ ok: true });
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
@@ -88,9 +90,9 @@ describe('SyncPanel', () => {
   it('confirming applies with {previewId, direction, confirm:true} and announces success in an aria-live region', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
-      if (method === 'status' && !args?.bucket) return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 };
-      if (method === 'status') return { ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
-      if (method === 'preview') return makePreview();
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'preview') return carrier(makePreview());
       if (method === 'apply') return { ok: true, revision: 'rev1', summary, committed: ['memories/daily/2026-08-29.md'], failures: [] };
       return { ok: true };
     });
@@ -110,9 +112,9 @@ describe('SyncPanel', () => {
   it('announces apply errors with role="alert" and keeps the dialog closed', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
-      if (method === 'status' && !args?.bucket) return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 };
-      if (method === 'status') return { ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
-      if (method === 'preview') return makePreview();
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'preview') return carrier(makePreview());
       if (method === 'apply') return { ok: false, error: 'inventory changed since preview', code: 'STALE_PREVIEW' };
       return { ok: true };
     });
@@ -131,9 +133,9 @@ describe('SyncPanel', () => {
     const user = userEvent.setup();
     const actions = Array.from({ length: 12 }, (_, i) => ({ path: `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`, action: 'merge' as const, target: 'local' as const, added: 1, reason: 'content differs' }));
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
-      if (method === 'status' && !args?.bucket) return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 };
-      if (method === 'status') return { ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
-      if (method === 'preview') return makePreview(actions);
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'preview') return carrier(makePreview(actions));
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));

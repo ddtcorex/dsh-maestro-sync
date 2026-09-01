@@ -19,20 +19,22 @@ function makeCtx(rpc: any) {
   return { connection: { rpc: { call: rpc } }, get: () => undefined as any };
 }
 
+const carrier = (value: any) => ({ ok: true, value });
+
 function statusRpc() {
   return vi.fn(async (_ch: string, method: string, args: any) => {
     if (method === 'status' && !args?.bucket) {
-      return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 1, both: 3 };
+      return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 1, both: 3 });
     }
     if (method === 'status') {
       const bucketFiles =
         args?.bucket === 'localOnly'
           ? ['memories/daily/2026-08-29.md', 'memories/MEMORY.md']
           : ['sessions/abc123/xyz.jsonl.zstd'];
-      return { ok: true, total: bucketFiles.length, offset: args?.cursor ?? 0, limit: 10, files: bucketFiles, nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
+      return carrier({ ok: true, total: bucketFiles.length, offset: args?.cursor ?? 0, limit: 10, files: bucketFiles, nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
     }
     if (method === 'preview') {
-      return {
+      return carrier({
         ok: true,
         previewId: PREVIEW_ID,
         revision: 'rev1',
@@ -41,9 +43,9 @@ function statusRpc() {
         summary,
         connection: { ok: true, host: 'sync-host' },
         remoteHost: 'sync-host',
-      };
+      });
     }
-    return { ok: true };
+    return carrier({ ok: true });
   });
 }
 
@@ -53,17 +55,17 @@ describe('SyncPanel file lists', () => {
   it('renders both bucket tables from status pages and pages them with Show more', async () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) {
-        return { ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 12, both: 3 };
+        return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 12, both: 3 });
       }
       if (method === 'status') {
         if (args?.bucket === 'localOnly') {
-          return { ok: true, total: 2, offset: args?.cursor ?? 0, limit: 10, files: ['memories/daily/2026-08-29.md', 'memories/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
+          return carrier({ ok: true, total: 2, offset: args?.cursor ?? 0, limit: 10, files: ['memories/daily/2026-08-29.md', 'memories/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
         }
         const start = args?.cursor ?? 0;
         const files = Array.from({ length: 12 }, (_, i) => `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`).slice(start, start + 10);
-        return { ok: true, total: 12, offset: start, limit: 10, files, nextCursor: start + 10 < 12 ? start + 10 : null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' };
+        return carrier({ ok: true, total: 12, offset: start, limit: 10, files, nextCursor: start + 10 < 12 ? start + 10 : null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       }
-      return { ok: true };
+      return carrier({ ok: true });
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
 
