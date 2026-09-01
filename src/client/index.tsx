@@ -1,6 +1,13 @@
 /**
- * dsh-maestro-sync — Settings section only (sidebar + dashboard removed)
- * Shows human-readable sync status inside Settings. No sidebar button, no overlay.
+ * dsh-maestro-sync — Settings section (confirmation-first preview/apply UI).
+ * - Preview is read-only: it stages and plans, then opens a confirmation dialog
+ *   that names direction, host, plan age and exact action counts.
+ * - Apply is only reachable inside that dialog, bound to the preview id, with
+ *   {confirm:true}. Escape cancels; nothing applies without confirmation.
+ * - aria-live="polite" for progress/results, role="alert" for errors, aria-busy
+ *   while requests run, accessible full file names for truncated paths, token
+ *   colors, and "Show more" pagination for long lists.
+ * No sidebar button, no dashboard overlay.
  */
 import * as React from 'react'
 
@@ -9,10 +16,8 @@ export const inject = ['slots', 'connection'] as const
 const RPC_CHANNEL = '/dsh-maestro-sync'
 
 // Shared Maestro mark — same as dsh-maestro-config / dashboard BrandMark
-// Path: M2 11 L5 4 L8 9 L11 4 L14 11 stroke 1.6 — keep in sync per AGENTS.md Branding
 const SETTINGS_NAV_MARKER = 'data-maestro-sync-settings-nav'
 const SETTINGS_NAV_CSS = `
-/* sync: replace the settings-nav fallback gear with the Maestro M-logo glyph — same mark as Maestro */
 [${SETTINGS_NAV_MARKER}] > svg:first-child,
 [${SETTINGS_NAV_MARKER}] > svg.zWKi1a_navIcon {
   display: none !important;
@@ -60,6 +65,7 @@ function registerSyncNavIcon(label: () => string, root?: any): () => void {
 }
 
 function installSyncNavIconStyle(): () => void {
+  if (typeof document === 'undefined') return () => {}
   const tag = document.createElement('style')
   tag.dataset.plugin = '@ddtcorex/dsh-maestro-sync'
   tag.dataset.pluginCss = 'maestro-sync/settings-nav.css'
@@ -85,7 +91,6 @@ const SYNC_CSS = `
 .sync-conn-main { flex:1; min-width:0; }
 .sync-conn-title { font-size:12px; font-weight:600; line-height:16px; }
 .sync-conn-desc { font-size:11px; line-height:14px; color:var(--dsw-alias-label-secondary); margin-top:2px; word-break:break-word; }
-.sync-conn-hint { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-border-l1); border-radius:6px; padding:4px 6px; margin-top:6px; display:inline-block; max-width:100%; overflow:auto; }
 .sync-fields { display:flex; gap:10px; flex-wrap:wrap; }
 .sync-field { flex:1 1 160px; min-width:0; border:1px solid var(--dsw-alias-border-l1); border-radius:8px; background:var(--dsw-alias-bg-layer-2); padding:8px 10px; }
 .sync-field-label { font-size:11px; color:var(--dsw-alias-label-secondary); font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
@@ -102,8 +107,6 @@ const SYNC_CSS = `
 .sync-section-count { font-size:11px; font-weight:600; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-1); border:1px solid var(--dsw-alias-border-l1); border-radius:999px; padding:2px 8px; }
 .sync-file { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--dsw-alias-border-l1); font-size:12px; }
 .sync-file:last-child{ border-bottom:none; }
-.sync-file-icon { flex:none; width:26px; height:26px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-size:13px; background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); color:var(--dsw-alias-label-secondary); }
-.sync-file-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; }
 .sync-file-title { font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
 .sync-file-path { font-size:11px; color:var(--dsw-alias-label-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sync-file-meta { flex:none; font-size:11px; color:var(--dsw-alias-label-secondary); background:var(--dsw-alias-bg-layer-2); border:1px solid var(--dsw-alias-border-l1); border-radius:6px; padding:1px 6px; }
@@ -113,14 +116,22 @@ const SYNC_CSS = `
 .sync-btn:hover { border-color:var(--dsw-alias-border-l2); background:var(--dsw-alias-bg-layer-2); }
 .sync-btn:focus-visible { outline:2px solid var(--dsw-alias-border-l2); outline-offset:2px; }
 .sync-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.sync-btn-primary { background:#2563EB; color:#fff; border-color:#2563EB; }
-.sync-btn-primary:hover { background:#1D4ED8; border-color:#1D4ED8; color:#fff; }
+/* token-driven primary action — no hardcoded brand color */
+.sync-btn-primary { background:var(--dsw-alias-brand-primary, #2563EB); color:#fff; border-color:var(--dsw-alias-brand-primary, #2563EB); }
+.sync-btn-primary:hover { opacity:0.92; background:var(--dsw-alias-brand-primary, #1D4ED8); border-color:var(--dsw-alias-brand-primary, #1D4ED8); color:#fff; }
 .sync-result { padding:10px 12px; border-radius:10px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-2); font-size:12px; line-height:16px; }
 .sync-result-error { border-color:var(--dsw-alias-state-error-primary, #DC2626); }
 .sync-result-error .sync-result-title { color:var(--dsw-alias-state-error-primary, #DC2626); }
 .sync-result-title { font-weight:600; margin-bottom:2px; font-size:12px; }
 .sync-result-desc { color:var(--dsw-alias-label-secondary); }
 .sync-muted { color:var(--dsw-alias-label-secondary); font-size:11px; line-height:14px; }
+.sync-show-more { align-self:center; }
+/* confirmation dialog */
+.sync-dialog-overlay { position:fixed; inset:0; z-index:1000; background:color-mix(in srgb, var(--dsw-alias-bg-layer-0, #000) 55%, transparent); display:flex; align-items:center; justify-content:center; padding:24px; }
+.sync-dialog { width:min(560px, 100%); max-height:80vh; overflow:auto; border:1px solid var(--dsw-alias-border-l2); border-radius:14px; background:var(--dsw-alias-bg-layer-1); box-shadow:0 20px 50px rgba(0,0,0,0.35); padding:16px; display:flex; flex-direction:column; gap:12px; }
+.sync-dialog-title { font-size:14px; font-weight:700; letter-spacing:-0.01em; }
+.sync-dialog-desc { font-size:12px; line-height:16px; color:var(--dsw-alias-label-secondary); }
+.sync-dialog-actions { display:flex; gap:8px; justify-content:flex-end; flex-wrap:wrap; }
 @media (prefers-reduced-motion: reduce) { .sync-btn { transition:none !important; } }
 `
 
@@ -153,48 +164,60 @@ function formatFile(path: string): { icon: string; title: string; path: string; 
     const hash = path.split('/')[1] ?? ''
     return { icon: '💬', title: 'Session', path, meta: hash.slice(0, 7) }
   }
-  if (path.startsWith('maestro/')) return { icon: '⚙️', title: path.split('/').pop() ?? path, path, meta: 'Maestro' }
-  if (path === 'settings.yaml') return { icon: '🔧', title: 'Settings', path, meta: 'Config' }
   return { icon: '📄', title: path.split('/').pop() ?? path, path, meta: path.split('/')[0] ?? '' }
 }
 
-function sortForDisplay(files: string[]): string[] {
-  const score = (p: string) => {
-    if (p.startsWith('sessions/')) return 0
-    if (p.startsWith('memories/daily/')) return 1
-    if (p.startsWith('memories/projects/')) return 2
-    if (p === 'memories/MEMORY.md') return 2
-    if (p.startsWith('memories/')) return 3
-    if (p.startsWith('maestro/')) return 4
-    return 5
+/** Exact action label — same-name files are never called "in sync" here. */
+function actionLabel(action: any): string {
+  switch (action?.action) {
+    case 'copy':
+      return 'copy'
+    case 'merge':
+      return `merge +${action.added ?? 0} ${(action.added ?? 0) === 1 ? 'new entry' : 'new entries'}`
+    case 'conflict':
+      return 'conflict'
+    default:
+      return 'skip'
   }
-  return [...files].sort((a, b) => {
-    const sa = score(a), sb = score(b)
-    if (sa !== sb) return sa - sb
-    return a.localeCompare(b)
-  })
 }
 
 function humanSummary(status: any): string {
-  if (!status) return 'Checking what needs to be synced…'
-  const { localOnly = 0, remoteOnly = 0, both = 0 } = status
-  if (localOnly === 0 && remoteOnly === 0) return `Everything is in sync — ${both} files match on both machines.`
-  if (localOnly > 0 && remoteOnly === 0) return `${localOnly} files only here will be sent when you push.`
-  if (remoteOnly > 0 && localOnly === 0) return `${remoteOnly} files only on the other machine will be pulled.`
-  return `${localOnly} only here · ${remoteOnly} only there · ${both} already match`
+  const localOnly = status?.localOnly ?? 0
+  const remoteOnly = status?.remoteOnly ?? 0
+  const both = status?.both ?? 0
+  if (localOnly === 0 && remoteOnly === 0 && both === 0) return 'No eligible files found on either side.'
+  return `${localOnly} only here · ${remoteOnly} only there · ${both} on both (content compared in Preview)`
+}
+
+interface PageState {
+  files: string[]
+  total: number
+  next: number | null
 }
 
 function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
   const [remoteHost, setRemoteHost] = React.useState<string>('…')
   const [lastSync, setLastSync] = React.useState<string | null>(() => {
-    try { return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null } catch { return null }
+    try {
+      return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null
+    } catch {
+      return null
+    }
   })
   const [status, setStatus] = React.useState<any>(null)
   const [connection, setConnection] = React.useState<{ ok: boolean; host: string; latencyMs?: number; error?: string } | null>(null)
   const [checking, setChecking] = React.useState<boolean>(true)
-  const [busy, setBusy] = React.useState<string | null>(null)
-  const [result, setResult] = React.useState<{ kind: 'dry' | 'pull' | 'push'; copied: number; merged: number; added: number } | null>(null)
+  const [busy, setBusy] = React.useState<boolean>(false)
+  const [result, setResult] = React.useState<{ kind: string; ok: boolean; text: string } | null>(null)
   const [error, setError] = React.useState<string>('')
+  const [preview, setPreview] = React.useState<any>(null)
+  const [previewDirection, setPreviewDirection] = React.useState<'pull' | 'push'>('pull')
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
+  const [actionLimit, setActionLimit] = React.useState(5)
+  const [pages, setPages] = React.useState<{ localOnly: PageState; remoteOnly: PageState }>({
+    localOnly: { files: [], total: 0, next: null },
+    remoteOnly: { files: [], total: 0, next: null },
+  })
 
   const call = React.useCallback((method: string, payload: any): Promise<any> => {
     const conn = (ctx as any).connection ?? (ctx as any).get?.('connection')
@@ -202,108 +225,146 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
     return conn.rpc.call(RPC_CHANNEL, method, payload) as Promise<any>
   }, [ctx])
 
+  const loadPage = React.useCallback(
+    async (bucket: 'localOnly' | 'remoteOnly', cursor: number) => {
+      try {
+        const res: any = await call('status', { bucket, cursor, limit: 10 })
+        if (!res?.ok) return
+        setPages((prev) => ({
+          ...prev,
+          [bucket]: {
+            files: cursor === 0 ? (res.files ?? []) : [...prev[bucket].files, ...(res.files ?? [])],
+            total: res.total ?? prev[bucket].total,
+            next: res.nextCursor ?? null,
+          },
+        }))
+      } catch {
+        // page load failure is non-fatal
+      }
+    },
+    [call],
+  )
+
   const loadStatus = React.useCallback(async () => {
-    setError(''); setChecking(true)
+    // a refresh invalidates previous status/action state (the last announcement
+    // stays visible until the next user action)
+    setError('')
+    setChecking(true)
+    setStatus(null)
     try {
       const res: any = await call('status', {})
-      // debug: log raw response for diagnosis (visible in browser console)
-      try { console.log('[maestro-sync] status raw', JSON.stringify(res).slice(0, 2000)) } catch {}
-      const data = res?.ok === true ? res : res?.ok === false ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'status failed'); setChecking(false); return }
-      try { console.log('[maestro-sync] status data', JSON.stringify({ remoteHost: (data as any).remoteHost, connection: (data as any).connection, localOnly: (data as any).localOnly, remoteOnly: (data as any).remoteOnly }).slice(0, 2000)) } catch {}
-      setStatus(data)
-      const conn = (data as any).connection ?? null
-      if (conn) setConnection(conn)
-      else {
-        // fallback: derive from remoteHost
-        const rh = (data as any).remoteHost ?? 'kai@ssh.ddtcorex.com'
-        setConnection({ ok: true, host: rh })
+      if (res?.ok === false) {
+        setError(res?.error ?? 'status failed')
+        return
       }
-      const rh = (data as any).remoteHost ?? (data as any).connection?.host ?? (data as any).remote ?? (data as any).remoteHostName
-      if (typeof rh === 'string' && rh) setRemoteHost(rh)
-      else if (remoteHost === '…') setRemoteHost('kai@ssh.ddtcorex.com')
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setChecking(false) }
-  }, [call, remoteHost])
+      setStatus(res)
+      const conn = (res as any)?.connection ?? null
+      if (conn) setConnection(conn)
+      else setConnection({ ok: true, host: (res as any)?.remoteHost ?? 'kai@ssh.ddtcorex.com' })
+      if (typeof (res as any)?.remoteHost === 'string' && (res as any).remoteHost) setRemoteHost((res as any).remoteHost)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setChecking(false)
+    }
+    await loadPage('localOnly', 0)
+    await loadPage('remoteOnly', 0)
+  }, [call, loadPage])
 
-  React.useEffect(() => { void loadStatus() }, [loadStatus])
+  React.useEffect(() => {
+    void loadStatus()
+  }, [loadStatus])
 
   const persistLastSync = React.useCallback((ts: string) => {
     setLastSync(ts)
-    try { if (typeof localStorage !== 'undefined') localStorage.setItem('dsh-maestro-sync:lastSync', ts) } catch {}
+    try {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('dsh-maestro-sync:lastSync', ts)
+    } catch {}
   }, [])
 
-  const [preview, setPreview] = React.useState<any>(null)
-  const [showConfirm, setShowConfirm] = React.useState(false)
-  void showConfirm; void preview;
-  const handlePreview = React.useCallback(async (direction: 'pull' | 'push') => {
-    setBusy('dry'); setError(''); setResult(null); setPreview(null)
-    try {
-      const res: any = await call('preview', { direction })
-      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'Preview failed'); return }
-      setPreview(data)
-      setShowConfirm(true)
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
-  }, [call])
-  const handleDryRun = React.useCallback(async () => {
-    await handlePreview('pull')
-  }, [handlePreview])
-  void handleDryRun
+  const handlePreview = React.useCallback(
+    async (direction: 'pull' | 'push') => {
+      setBusy(true)
+      setError('')
+      setResult(null)
+      setActionLimit(5)
+      try {
+        const res: any = await call('preview', { direction })
+        if (res?.ok === false) {
+          setError(res?.error ?? 'Preview failed')
+          return
+        }
+        setPreview(res)
+        setPreviewDirection(direction)
+        setConfirmOpen(true)
+      } catch (e: any) {
+        setError(e?.message ?? String(e))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [call],
+  )
+
   const handleApply = React.useCallback(async () => {
-    if (!preview?.previewId) { setError('No preview to apply'); return }
-    setBusy('apply'); setError('')
+    if (!preview?.previewId) return
+    setBusy(true)
+    setError('')
+    const previewId = preview.previewId
+    const direction = previewDirection
     try {
-      const direction = preview?.direction ?? 'pull'
-      const res: any = await call('apply', { previewId: preview.previewId, direction, confirm: true })
-      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'Apply failed'); return }
-      setResult({ kind: direction, copied: data.committed?.length ?? data.copied ?? 0, merged: data.summary?.merged ?? 0, added: data.summary?.added ?? 0 })
-      setPreview(null); setShowConfirm(false)
+      const res: any = await call('apply', { previewId, direction, confirm: true })
+      setConfirmOpen(false)
+      setPreview(null)
+      if (res?.ok === false) {
+        const label = typeof res.code === 'string' ? res.code : 'apply failed'
+        setError(`${label}: ${res?.error ?? 'apply failed'}`)
+        setResult({ kind: 'apply', ok: false, text: 'Apply failed' })
+        return
+      }
+      setResult({ kind: 'apply', ok: true, text: `Applied preview ${previewId.slice(0, 8)} — committed ${(res?.committed ?? []).length} file(s), +${res?.summary?.added ?? 0} entries` })
       persistLastSync(new Date().toISOString())
-      await loadStatus()
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
-  }, [call, preview, loadStatus, persistLastSync])
-  void handleApply;
+      void loadStatus()
+    } catch (e: any) {
+      setConfirmOpen(false)
+      setPreview(null)
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [preview, previewDirection, call, loadStatus, persistLastSync])
 
-  const handlePull = React.useCallback(async () => {
-    setBusy('pull'); setError(''); setResult(null)
-    try {
-      const res: any = await call('pull', { dryRun: false })
-      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'Pull failed'); return }
-      setResult({ kind: 'pull', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
-      if (data?.ok !== false) persistLastSync(new Date().toISOString())
-      await loadStatus()
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
-  }, [call, loadStatus, persistLastSync])
+  const cancelDialog = React.useCallback(() => {
+    setConfirmOpen(false)
+    setPreview(null)
+  }, [])
 
-  const handlePush = React.useCallback(async () => {
-    setBusy('push'); setError(''); setResult(null)
-    try {
-      const res: any = await call('push', { dryRun: false })
-      const data = res?.ok === false ? res : res?.ok === true ? res : { ok: true, ...res }
-      if (data?.ok === false) { setError(data?.error ?? 'Push failed'); return }
-      setResult({ kind: 'push', copied: data.copied ?? 0, merged: data.merged ?? 0, added: data.added ?? 0 })
-      if (data?.ok !== false) persistLastSync(new Date().toISOString())
-      await loadStatus()
-    } catch (e: any) { setError(e?.message ?? String(e)) } finally { setBusy(null) }
-  }, [call, loadStatus, persistLastSync])
-
-  void handleDryRun; void handlePull; void handlePush
-  const summary = humanSummary(status)
+  React.useEffect(() => {
+    if (!confirmOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelDialog()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirmOpen, cancelDialog])
 
   const isConnected = connection?.ok === true
   const isDisconnected = connection?.ok === false
   const canSync = isConnected && !checking && !busy
+  const summary = humanSummary(status)
 
-  return React.createElement('div', { className: 'sync-card' },
+  const previewActions = (preview?.actions ?? []).slice(0, actionLimit)
+  const hasMoreActions = (preview?.actions?.length ?? 0) > actionLimit
+  const planAgeSecs = preview?.expiresAt ? Math.max(0, Math.round((new Date(preview.expiresAt).getTime() - Date.now()) / 1000)) : 0
+
+  return React.createElement('div', { className: 'sync-card', 'aria-busy': busy || checking },
     React.createElement('style', null, SYNC_CSS),
     React.createElement('div', { className: 'sync-header', style: { alignItems: 'flex-start' } as any },
       React.createElement('span', {
         'data-maestro-logo': '',
         style: {
           width: 28, height: 28, borderRadius: 8, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-          background: 'var(--dsw-alias-brand-primary, #0A84FF)', backgroundColor: '#0A84FF', color: '#fff', flex: 'none',
+          background: 'var(--dsw-alias-brand-primary, #0A84FF)', color: '#fff', flex: 'none',
           border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 0 0 1px var(--dsw-alias-border-l1)', boxSizing: 'border-box' as any, marginTop: 2,
         },
       } as any,
@@ -317,25 +378,27 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
       ),
       React.createElement('button', { type: 'button', onClick: loadStatus, className: 'sync-btn', disabled: !!busy || checking, 'aria-label': 'Refresh status', style: { marginTop: 2 } as any }, checking ? 'Checking…' : 'Refresh'),
     ),
-    React.createElement('style', null, '[data-maestro-logo]{background:#0A84FF !important; background-color:#0A84FF !important; color:#fff !important;}'),
-    // Connection banner — prerequisite for all sync actions
+
+    // connection banner
     React.createElement('div', { className: `sync-conn ${isDisconnected ? 'sync-conn-bad' : 'sync-conn-ok'}` },
       React.createElement('div', { className: `sync-conn-dot ${checking ? 'sync-conn-dot-checking' : isConnected ? 'sync-conn-dot-ok' : isDisconnected ? 'sync-conn-dot-bad' : 'sync-conn-dot-checking'}` }),
       React.createElement('div', { className: 'sync-conn-main' },
-        checking ? React.createElement('div', { className: 'sync-conn-title' }, `Checking SSH to ${remoteHost}…`)
-          : isConnected ? React.createElement(React.Fragment, null,
-              React.createElement('div', { className: 'sync-conn-title' }, `Connected to ${connection!.host}${connection!.latencyMs != null ? ` · ${connection!.latencyMs}ms` : ''} · SSH ready`),
-              React.createElement('div', { className: 'sync-conn-desc' }, 'Preview, Pull and Push will use this host. If counts look wrong, hit Refresh.'),
-            )
-          : isDisconnected ? React.createElement(React.Fragment, null,
-              React.createElement('div', { className: 'sync-conn-title' }, `Cannot reach ${connection!.host} — sync is paused`),
-              React.createElement('div', { className: 'sync-conn-desc' }, connection!.error ? String(connection!.error).slice(0, 220) : 'SSH failed. Check that the host is reachable and your key is loaded.'),
-              React.createElement('div', { className: 'sync-conn-hint' }, `ssh -o ConnectTimeout=5 ${connection!.host} "echo ok"`),
-              React.createElement('div', { className: 'sync-conn-desc', style: { marginTop: '4px' } as any }, 'Fix: check ~/.ssh/config Host ' + connection!.host + ', ssh-agent, and that the remote ~/.dsh exists.'),
-            )
-          : React.createElement('div', { className: 'sync-conn-title' }, 'Checking connection…'),
+        checking
+          ? React.createElement('div', { className: 'sync-conn-title' }, `Checking SSH to ${remoteHost}…`)
+          : isConnected
+            ? React.createElement(React.Fragment, null,
+                React.createElement('div', { className: 'sync-conn-title' }, `Connected to ${connection!.host}${connection!.latencyMs != null ? ` · ${connection!.latencyMs}ms` : ''} · SSH ready`),
+                React.createElement('div', { className: 'sync-conn-desc' }, 'Use Preview to see the exact plan — Apply always requires confirmation in this dialog.'),
+              )
+            : isDisconnected
+              ? React.createElement(React.Fragment, null,
+                  React.createElement('div', { className: 'sync-conn-title' }, `Cannot reach ${connection!.host} — sync is paused`),
+                  React.createElement('div', { className: 'sync-conn-desc' }, connection!.error ? String(connection!.error).slice(0, 220) : 'SSH failed. Check that the host is reachable and your key is loaded.'),
+                )
+              : React.createElement('div', { className: 'sync-conn-title' }, 'Checking connection…'),
       ),
     ),
+
     React.createElement('div', { className: 'sync-fields' },
       React.createElement('div', { className: 'sync-field' },
         React.createElement('div', { className: 'sync-field-label' }, 'Remote host'),
@@ -346,86 +409,98 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
         React.createElement('div', { className: 'sync-field-value', 'data-testid': 'sync-last-sync' }, formatLastSync(lastSync)),
       ),
     ),
-    // 3-stat summary — neutral DSH tokens only
+
     React.createElement('div', { className: 'sync-stats' },
       React.createElement('div', { className: 'sync-stat' },
         React.createElement('div', { className: 'sync-stat-label' }, 'Only on this machine'),
         React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.localOnly ?? 0) : '—'),
-        React.createElement('div', { className: 'sync-stat-desc' }, status?.localOnly ? 'Will be sent when you push.' : 'Nothing new here.'),
+        React.createElement('div', { className: 'sync-stat-desc' }, status?.localOnly ? 'Considered when you push.' : 'Nothing here.'),
       ),
       React.createElement('div', { className: 'sync-stat' },
-        React.createElement('div', { className: 'sync-stat-label' }, 'Already in sync'),
+        React.createElement('div', { className: 'sync-stat-label' }, 'On both machines'),
         React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.both ?? 0) : '—'),
-        React.createElement('div', { className: 'sync-stat-desc' }, 'Files matching on both machines.'),
+        React.createElement('div', { className: 'sync-stat-desc' }, 'Same path on both sides — content is compared exactly in Preview.'),
       ),
       React.createElement('div', { className: 'sync-stat' },
         React.createElement('div', { className: 'sync-stat-label' }, 'Only on the other machine'),
         React.createElement('div', { className: 'sync-stat-value' }, status ? String(status.remoteOnly ?? 0) : '—'),
-        React.createElement('div', { className: 'sync-stat-desc' }, status?.remoteOnly ? 'Will be brought when you pull.' : 'Nothing new there.'),
+        React.createElement('div', { className: 'sync-stat-desc' }, status?.remoteOnly ? 'Considered when you pull.' : 'Nothing there.'),
       ),
     ),
+
     React.createElement('div', { className: 'sync-actions' },
-      React.createElement('button', { type: 'button', onClick: () => handlePreview('pull'), className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-preview-pull' }, busy === 'dry' ? 'Checking…' : 'Preview Pull'),
-      React.createElement('button', { type: 'button', onClick: () => handlePreview('push'), className: 'sync-btn', disabled: !canSync, title: !isConnected ? `Cannot preview — SSH to ${remoteHost} is not connected` : undefined, 'data-testid': 'sync-preview-push' }, busy === 'dry' ? 'Checking…' : 'Preview Push'),
+      React.createElement('button', { type: 'button', onClick: () => handlePreview('pull'), className: 'sync-btn', disabled: !canSync, 'data-testid': 'sync-preview-pull' }, busy ? 'Working…' : 'Preview Pull'),
+      React.createElement('button', { type: 'button', onClick: () => handlePreview('push'), className: 'sync-btn', disabled: !canSync, 'data-testid': 'sync-preview-push' }, busy ? 'Working…' : 'Preview Push'),
       React.createElement('span', { className: 'sync-muted', style: { marginLeft: 'auto' } as any }, checking ? 'Checking SSH…' : isConnected ? `SSH ${connection!.host} · ${connection!.latencyMs ?? '—'}ms` : isDisconnected ? 'SSH disconnected' : 'SSH unknown'),
     ),
-    preview ? React.createElement('div', { className: 'sync-section', 'aria-live': 'polite' } as any,
-      React.createElement('div', { className: 'sync-section-head' },
-        React.createElement('div', { className: 'sync-section-title' }, `Preview — ${preview.direction ?? 'pull'} · ${preview.summary?.copied ?? 0} copy · ${preview.summary?.merged ?? 0} merge · ${preview.summary?.skipped ?? 0} skip · ${preview.summary?.conflicts ?? 0} conflict`),
-        React.createElement('div', { className: 'sync-section-count' }, `${preview.actions?.length ?? 0} files`),
-      ),
-      (preview.actions ?? []).slice(0, 20).map((a: any) => {
-        const f = formatFile(a.path)
-        const actionLabel = a.action === 'copy' ? 'copy' : a.action === 'merge' ? `merge +${a.added ?? 0}` : a.action === 'skip' ? 'skip' : 'conflict'
-        return React.createElement('div', { key: a.path, className: 'sync-file' },
-          React.createElement('div', { className: 'sync-file-icon' }, f.icon),
-          React.createElement('div', { className: 'sync-file-main' },
-            React.createElement('div', { className: 'sync-file-title' }, `${f.title} — ${actionLabel}`),
-            React.createElement('div', { className: 'sync-file-path' }, a.path),
+
+    // confirmation dialog — the only place apply exists
+    confirmOpen && preview
+      ? React.createElement('div', { className: 'sync-dialog-overlay' },
+          React.createElement('div', { role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sync-dialog-title', className: 'sync-dialog' },
+            React.createElement('div', { id: 'sync-dialog-title', className: 'sync-dialog-title' }, `Apply ${previewDirection} — preview ${String(preview.previewId ?? '').slice(0, 8)}`),
+            React.createElement('div', { className: 'sync-dialog-desc' },
+              `Host ${remoteHost} · plan ${planAgeSecs}s before expiry · ${preview.summary?.copied ?? 0} copy · ${preview.summary?.merged ?? 0} merge (+${preview.summary?.added ?? 0} added) · ${preview.summary?.skipped ?? 0} skip · ${preview.summary?.conflicts ?? 0} conflict`,
+            ),
+            React.createElement('div', { className: 'sync-section' },
+              previewActions.map((a: any) => {
+                const f = formatFile(a.path)
+                return React.createElement('div', { key: a.path, className: 'sync-file', 'data-action-row': 'true', title: a.path },
+                  React.createElement('div', { className: 'sync-file-main' },
+                    React.createElement('div', { className: 'sync-file-title' }, `${f.title} — ${actionLabel(a)}`),
+                    React.createElement('div', { className: 'sync-file-path' }, a.path),
+                  ),
+                  React.createElement('div', { className: 'sync-file-meta' }, a.reason ?? a.action),
+                )
+              }),
+              hasMoreActions
+                ? React.createElement('div', { className: 'sync-actions', style: { padding: '10px 12px' } as any },
+                    React.createElement('button', { type: 'button', className: 'sync-btn sync-show-more', onClick: () => setActionLimit((n) => n + 5) }, 'Show more'),
+                  )
+                : null,
+            ),
+            React.createElement('div', { className: 'sync-dialog-actions' },
+              React.createElement('button', { type: 'button', onClick: cancelDialog, className: 'sync-btn', disabled: busy, 'aria-label': 'Cancel' }, 'Cancel'),
+              React.createElement('button', { type: 'button', onClick: handleApply, className: 'sync-btn sync-btn-primary', disabled: busy, 'aria-label': `Apply ${previewDirection}` }, busy ? 'Applying…' : `Apply ${previewDirection} — ${preview.summary?.copied ?? 0} copy, ${preview.summary?.merged ?? 0} merge`),
+            ),
           ),
-          React.createElement('div', { className: 'sync-file-meta' }, a.reason ?? a.action),
         )
-      }),
-      React.createElement('div', { className: 'sync-actions', style: { padding: '10px 12px' } as any },
-        React.createElement('button', { type: 'button', onClick: handleApply, className: 'sync-btn sync-btn-primary', disabled: busy === 'apply', 'data-testid': 'sync-apply' }, busy === 'apply' ? 'Applying…' : `Apply ${preview.direction ?? 'pull'} — ${preview.summary?.copied ?? 0} copy, ${preview.summary?.merged ?? 0} merge`),
-        React.createElement('button', { type: 'button', onClick: () => { setPreview(null); setShowConfirm(false) }, className: 'sync-btn', disabled: busy === 'apply' }, 'Cancel'),
-        React.createElement('span', { className: 'sync-muted' }, `Preview ${preview.previewId?.slice(0, 8) ?? ''} · expires ${preview.expiresAt ? new Date(preview.expiresAt).toLocaleTimeString() : ''} · host ${preview.remoteHost ?? remoteHost}`),
-      ),
-    ) : null,
-    // File lists — compact human-readable
-    status ? React.createElement('div', { className: 'sync-section' },
+      : null,
+
+    // per-bucket file lists (cursor-paged)
+    React.createElement('div', { className: 'sync-section' },
       React.createElement('div', { className: 'sync-section-head' },
         React.createElement('div', { className: 'sync-section-title' }, '📥 Coming from the other machine'),
-        React.createElement('div', { className: 'sync-section-count' }, `${status.remoteOnlyFiles?.length ?? 0} files`),
+        React.createElement('div', { className: 'sync-section-count' }, `${pages.remoteOnly.files.length}/${pages.remoteOnly.total} files`),
       ),
       isDisconnected
         ? React.createElement('div', { className: 'sync-empty' }, `Cannot check remote — SSH to ${connection!.host} is not connected. Fix SSH then Refresh.`)
-        : (status.remoteOnlyFiles?.length ?? 0) === 0
-          ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no new files.')
-        : sortForDisplay(status.remoteOnlyFiles as string[]).slice(0, 8).map((p: string) => {
-            const f = formatFile(p)
-            return React.createElement('div', { key: p, className: 'sync-file' },
-              React.createElement('div', { className: 'sync-file-icon' }, f.icon),
-              React.createElement('div', { className: 'sync-file-main' },
-                React.createElement('div', { className: 'sync-file-title' }, f.title),
-                React.createElement('div', { className: 'sync-file-path' }, f.path),
-              ),
-              React.createElement('div', { className: 'sync-file-meta' }, f.meta),
-            )
-          }),
-      !isDisconnected && (status.remoteOnlyFiles?.length ?? 0) > 8 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.remoteOnlyFiles.length - 8} more · sessions first, then daily notes`) : null,
-    ) : null,
-    status ? React.createElement('div', { className: 'sync-section' },
+        : pages.remoteOnly.files.length === 0 && !checking
+          ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to pull — the other machine has no eligible files here.')
+          : pages.remoteOnly.files.map((p: string) => {
+              const f = formatFile(p)
+              return React.createElement('div', { key: p, className: 'sync-file', title: p },
+                React.createElement('div', { className: 'sync-file-main' },
+                  React.createElement('div', { className: 'sync-file-title' }, f.title),
+                  React.createElement('div', { className: 'sync-file-path' }, f.path),
+                ),
+                React.createElement('div', { className: 'sync-file-meta' }, f.meta),
+              )
+            }),
+      pages.remoteOnly.next != null ? React.createElement('div', { className: 'sync-actions', style: { padding: '8px 12px' } as any },
+        React.createElement('button', { type: 'button', className: 'sync-btn sync-show-more', onClick: () => loadPage('remoteOnly', pages.remoteOnly.next!) }, 'Show more'),
+      ) : null,
+    ),
+    React.createElement('div', { className: 'sync-section' },
       React.createElement('div', { className: 'sync-section-head' },
         React.createElement('div', { className: 'sync-section-title' }, '📤 Ready to send'),
-        React.createElement('div', { className: 'sync-section-count' }, `${status.localOnlyFiles?.length ?? 0} files`),
+        React.createElement('div', { className: 'sync-section-count' }, `${pages.localOnly.files.length}/${pages.localOnly.total} files`),
       ),
-      (status.localOnlyFiles?.length ?? 0) === 0
-        ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to push — this machine has no new files.')
-        : sortForDisplay(status.localOnlyFiles as string[]).slice(0, 8).map((p: string) => {
+      pages.localOnly.files.length === 0 && !checking
+        ? React.createElement('div', { className: 'sync-empty' }, 'Nothing to push — this machine has no eligible files here.')
+        : pages.localOnly.files.map((p: string) => {
             const f = formatFile(p)
-            return React.createElement('div', { key: p, className: 'sync-file' },
-              React.createElement('div', { className: 'sync-file-icon' }, f.icon),
+            return React.createElement('div', { key: p, className: 'sync-file', title: p },
               React.createElement('div', { className: 'sync-file-main' },
                 React.createElement('div', { className: 'sync-file-title' }, f.title),
                 React.createElement('div', { className: 'sync-file-path' }, f.path),
@@ -433,39 +508,41 @@ function SyncPanel({ ctx }: { ctx: any }): React.ReactElement {
               React.createElement('div', { className: 'sync-file-meta' }, f.meta),
             )
           }),
-      (status.localOnlyFiles?.length ?? 0) > 8 ? React.createElement('div', { className: 'sync-empty' }, `And ${status.localOnlyFiles.length - 8} more · sessions first`) : null,
+      pages.localOnly.next != null ? React.createElement('div', { className: 'sync-actions', style: { padding: '8px 12px' } as any },
+        React.createElement('button', { type: 'button', className: 'sync-btn sync-show-more', onClick: () => loadPage('localOnly', pages.localOnly.next!) }, 'Show more'),
+      ) : null,
+    ),
+
+    // results + errors (announced)
+    result ? React.createElement('div', { className: 'sync-result', role: 'status' },
+      React.createElement('div', { className: 'sync-result-title' }, result.ok ? 'Apply complete' : 'Apply failed'),
+      React.createElement('div', { className: 'sync-result-desc' }, result.text),
     ) : null,
-    error ? React.createElement('div', { className: 'sync-result sync-result-error' },
+    error ? React.createElement('div', { className: 'sync-result sync-result-error', role: 'alert' },
       React.createElement('div', { className: 'sync-result-title' }, 'Something went wrong'),
       React.createElement('div', { className: 'sync-result-desc' }, error),
     ) : null,
-    result ? React.createElement('div', { className: 'sync-result' },
-      React.createElement('div', { className: 'sync-result-title' },
-        result.kind === 'dry' ? 'Preview — nothing was changed yet' : result.kind === 'pull' ? 'Pull complete' : 'Push complete',
-      ),
-      React.createElement('div', { className: 'sync-result-desc' },
-        result.kind === 'dry' ? `${result.copied} files would be copied and ${result.added} new notes would be merged. Run Pull to actually bring them here.`
-          : result.kind === 'pull' ? `Brought ${result.copied} files and merged ${result.added} new notes.`
-          : `Sent ${result.copied} files to the other machine.`,
-        result.merged > 0 ? ` ${result.merged} memories had new notes combined.` : '',
-      ),
-    ) : null,
-    React.createElement('div', { className: 'sync-muted', style: { textAlign: 'center' } as any }, 'Notes and sessions are merged — never overwritten. Daily notes by unique entries, sessions by new lines.'),
+    React.createElement('div', { className: 'sync-muted', style: { textAlign: 'center' } as any }, 'Notes and sessions are merged — never overwritten. Apply always requires confirmation.'),
   )
 }
 
 export function apply(ctx: any): void {
   const slots = (ctx as any).slots ?? (ctx as any).get?.('slots')
   if (!slots?.inject || !slots?.register) return
-  // Shared Maestro nav icon — same M-logo as Maestro tab (BrandMark)
   ctx.effect(() => registerSyncNavIcon(() => 'Maestro Sync'), 'maestro-sync: settings nav icon')
   ctx.effect(installSyncNavIconStyle, 'maestro-sync: settings nav css')
   ctx.effect(() => {
     const dispose = slots.inject('settings.section', () =>
       slots.register({ name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' }, () => React.createElement(SyncPanel, { ctx })),
     )
-    return () => { try { (dispose as any)?.() } catch {} }
+    return () => {
+      try {
+        (dispose as any)?.()
+      } catch {}
+    }
   }, 'maestro-sync: settings')
 }
+
+export { SyncPanel }
 
 export default { inject, apply }
