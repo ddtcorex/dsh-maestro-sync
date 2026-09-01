@@ -161,6 +161,7 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
 [data-sync-planrow-meta] { flex: none; }
 [data-sync-planmore] { display: flex; justify-content: center; padding: 8px; }
 [data-sync-empty] { padding: 16px 12px; text-align: center; color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 16px; }
+[data-sync-loading] { padding: 16px 12px; text-align: center; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 16px; }
 [data-sync-dialog-actions] { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
 /* ---- file list sections (in-card) ---- */

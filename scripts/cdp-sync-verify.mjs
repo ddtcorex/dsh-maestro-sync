@@ -129,12 +129,19 @@ async function main() {
         return { section: (root.innerText || '').slice(0, 2000) };
       })()`)
     await evalJs(ws, `(() => { const el = document.querySelector('[data-testid="sync-preview-pull"]'); if (el) el.click(); return !!el })()`)
+    // capture the progress bar while the count-only preview runs (hashing ticks)
+    let progressSeen = null
+    for (let i = 0; i < 40; i++) {
+      progressSeen = await evalJs(ws, `(() => { const p = document.querySelector('[data-sync-progress]'); if (!p) return null; return p.innerText.slice(0, 200) })()`)
+      if (progressSeen) break
+      await new Promise((r) => setTimeout(r, 300))
+    }
     let dialog = null
-    // remote preview runs an SSH checksum dry-run; stage can take 2+ min on a slow link
+    // remote preview runs a checksum-only session count now (~10s); md stage can still take a while
     for (let i = 0; i < 360; i++) {
       const alertHit = await evalJs(ws, `(() => { const a = document.querySelector('[role="alert"]'); return a ? a.innerText.slice(0, 300) : null })()`)
       if (alertHit) { dialog = { alert: alertHit, rows: 0 }; break }
-      dialog = await evalJs(ws, `(() => { const d = [...document.querySelectorAll('[role="dialog"]')].find((x) => (x.innerText || '').includes('Cancel') && (x.innerText || '').includes('Apply')); if (!d) return null; return { text: d.innerText.slice(0, 800), rows: d.querySelectorAll('[data-action-row]').length, hasPreviewId: !!(d.innerText || '').match(/[a-f0-9]{32}/) } })()`)
+      dialog = await evalJs(ws, `(() => { const d = [...document.querySelectorAll('[role="dialog"]')].find((x) => (x.innerText || '').includes('Cancel') && (x.innerText || '').includes('Apply')); if (!d) return null; const sc = d.querySelector('[data-sync-sessioncounts]'); return { text: d.innerText.slice(0, 800), rows: d.querySelectorAll('[data-action-row]').length, hasPreviewId: !!(d.innerText || '').match(/[a-f0-9]{32}/), sessionCounts: sc ? sc.innerText : null } })()`)
       if (dialog) break
       await new Promise((r) => setTimeout(r, 500))
     }
@@ -149,6 +156,7 @@ async function main() {
       statTiles,
       statsDigits: statLines,
       previewButtonClicked: !!(await evalJs(ws, `!!document.querySelector('[data-testid="sync-preview-pull"]')`)),
+      progressSeen,
       lists: listSectionsOut,
       dialog,
     }

@@ -20,6 +20,8 @@ export interface PageState {
   files: string[]
   total: number
   next: number | null
+  /** true once the first page has settled — separates "still loading" from "genuinely empty" */
+  loaded?: boolean
 }
 
 export type Bucket = 'localOnly' | 'remoteOnly'
@@ -46,8 +48,8 @@ export function useSync(ctx: any) {
   const [progress, setProgress] = React.useState<{ phase: string; current: number; total: number; file?: string } | null>(null)
   const cancelledRef = React.useRef(false)
   const [pages, setPages] = React.useState<Record<Bucket, PageState>>({
-    localOnly: { files: [], total: 0, next: null },
-    remoteOnly: { files: [], total: 0, next: null },
+    localOnly: { files: [], total: 0, next: null, loaded: false },
+    remoteOnly: { files: [], total: 0, next: null, loaded: false },
   })
 
   // dsh-client-connection decodes every RPC response as the carrier shape
@@ -77,6 +79,7 @@ export function useSync(ctx: any) {
             files: cursor === 0 ? (res.files ?? []) : [...prev[bucket].files, ...(res.files ?? [])],
             total: res.total ?? prev[bucket].total,
             next: res.nextCursor ?? null,
+            loaded: true,
           },
         }))
       } catch {
