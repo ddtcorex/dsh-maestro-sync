@@ -534,9 +534,14 @@ export class SyncService {
 
   /**
    * Apply a previously generated preview (the only mutation route).
-   * Re-inventories both sides, recomputes the plan and rejects any change
-   * (STALE_PREVIEW) before a single write. Pull publishes atomically per local
-   * file; push materializes, uploads and commits through the remote CAS helper.
+   * Re-inventories both sides and applies the FRESHEST plan — DSH homes change
+   * continuously (session logs are appended every turn), so a byte-for-byte
+   * inventory comparison would reject nearly every live apply (STALE_PREVIEW).
+   * Safety stays fail-closed without it: each file publish carries the
+   * expected target sha (CAS) and a preview is single-use, so a concurrent
+   * modification during the write is still rejected and nothing is overwritten
+   * silently. Pull publishes atomically per local file; push materializes,
+   * uploads and commits through the remote CAS helper.
    */
   async apply(req: ApplyRequest): Promise<ApplyResult> {
     this.assertApplyRequest(req);
@@ -551,9 +556,6 @@ export class SyncService {
     const { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth();
     try {
       const fresh = await buildPlan(localSnapshots, remoteSnapshots, req.direction, localContents, remoteContents);
-      if (fresh.revision !== preview.revision) {
-        throw syncFailure('validate', 'STALE_PREVIEW', `inventory changed since preview (revision ${preview.revision} -> ${fresh.revision})`);
-      }
 
       const committed: string[] = [];
       const failures: SyncFailure[] = [];

@@ -53,8 +53,8 @@ const stubRunner: any = {
 beforeEach(() => clearPreviews());
 
 describe('apply', () => {
-  it('rejects a preview whose inventory changed since preview, before any write', async () => {
-    const { localRoot, cleanup } = makeTempRoots('apply-stale-');
+  it('applies against the freshest inventory: a change between preview and apply is merged, not rejected', async () => {
+    const { localRoot, cleanup } = makeTempRoots('apply-fresh-');
     try {
       fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
       const localPath = path.join(localRoot, MD);
@@ -72,12 +72,15 @@ describe('apply', () => {
       const preview = await svc.preview({ direction: 'pull' });
       expect(preview.actions).toContainEqual(expect.objectContaining({ path: MD, action: 'merge' }));
 
-      // Remote adds another entry between preview and apply.
+      // Remote adds another entry between preview and apply — a live DSH home
+      // changes every turn, so apply re-inventories and merges the newest bytes
+      // instead of failing on a stale comparison. CAS still guards the write.
       fake.remote.set(MD, Buffer.from('a\n§\nremote1\n§\nremote2\n'));
 
-      await expect(svc.apply({ previewId: preview.previewId, direction: 'pull', confirm: true })).rejects.toMatchObject({ code: 'STALE_PREVIEW' });
-      // No local write happened.
-      expect(fs.readFileSync(localPath, 'utf-8')).toBe('a\n§\nlocal1\n');
+      const applied = await svc.apply({ previewId: preview.previewId, direction: 'pull', confirm: true });
+      expect(applied.ok).toBe(true);
+      // The fresh remote entry was pulled in too.
+      expect(fs.readFileSync(localPath, 'utf-8')).toContain('remote2');
     } finally {
       cleanup();
     }
