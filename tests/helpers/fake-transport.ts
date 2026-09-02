@@ -3,15 +3,16 @@
  *
  * The fake holds a `remote` Map<string, Buffer> of the remote DSH root and
  * mirrors the real SshRsyncTransport + remote-agent semantics:
- * - list(target)  -> newline-separated relative paths
+ * - manifest(target)  -> validated eligible RemoteManifestEntry[] (path/sha/size)
  * - stage(target, paths, dest) -> writes raw Buffers into dest (real fs), byte-exact
  * - upload(target, source, paths, operationId) -> reads raw Buffers from source, records them in `.maestro-sync/stage/<op>/`
  * - commit(target, operationId, manifest) -> compare-and-swap: verifies every target still
  *   matches its expected SHA-256 (or is absent when expected === 'absent') before publishing;
  *   a mismatch throws CONCURRENT_MODIFICATION and writes nothing for that entry.
+ * - warmCache(target) -> counts invocations (push-apply refreshes the remote fp cache)
  * - remoteHome(target) -> '/home/kai'
  *
- * `calls` records upload/commit/stage invocations for assertions.
+ * `calls` records upload/commit/stage/manifest/warmCache invocations for assertions.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -29,7 +30,7 @@ export interface FakeRemoteResult {
     stage: { dest: string; paths: string[] }[];
     upload: { source: string; paths: string[]; operationId: string }[];
     commit: { operationId: string; manifest: Buffer }[];
-    list: number;
+    manifest: number;
     ensureAgent?: number;
     warmCache?: number;
   };
@@ -47,27 +48,9 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
   const staged = new Map<string, Map<string, Buffer>>();
   const result: FakeRemoteResult = {
     remote,
-    calls: { stage: [], upload: [], commit: [], list: 0 },
+    calls: { stage: [], upload: [], commit: [], manifest: 0 },
     transport: {
       remoteHome: async () => '/home/kai',
-      list: async () => {
-        result.calls.list++;
-        // Mirror the real transport: absolute paths under the validated root, like `find`.
-        const abs = [...remote.keys()].sort().map((k) => `${dshRoot}/${k}`);
-        return Buffer.from(abs.join('\n') + (abs.length ? '\n' : ''), 'utf-8');
-      },
-      compare: async (target: RemoteTarget, localRoot: string, paths: readonly string[]) => {
-        const changed: string[] = [];
-        for (const rel of paths) {
-          const remoteBuf = remote.get(rel);
-          if (remoteBuf === undefined) continue;
-          let localBuf: Buffer | null = null;
-          const full = path.join(localRoot, rel);
-          if (fs.existsSync(full)) localBuf = fs.readFileSync(full);
-          if (localBuf === null || sha256(localBuf) !== sha256(remoteBuf)) changed.push(rel);
-        }
-        return Buffer.from(changed.join('\n') + (changed.length ? '\n' : ''), 'utf-8');
-      },
       stage: async (target: RemoteTarget, paths: readonly string[], destination: string) => {
         result.calls.stage.push({ dest: destination, paths: [...paths] });
         for (const rel of paths) {
@@ -78,18 +61,8 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
           fs.writeFileSync(full, buf);
         }
       },
-      hashes: async (target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void) => {
-        const out: { path: string; sha256: string; size: number }[] = [];
-        for (const rel of paths) {
-          const buf = remote.get(rel);
-          if (buf === undefined) continue;
-          const entry = { path: rel, sha256: sha256(buf), size: buf.length };
-          out.push(entry);
-          onFile?.(entry);
-        }
-        return out;
-      },
       manifest: async (): Promise<RemoteManifestEntry[]> => {
+        result.calls.manifest++;
         const out: RemoteManifestEntry[] = [];
         for (const [rel, buf] of remote) {
           try {
