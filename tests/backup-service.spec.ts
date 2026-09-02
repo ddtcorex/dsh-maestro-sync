@@ -152,4 +152,59 @@ describe('backup apply', () => {
       fs.rmSync(dsh, { recursive: true, force: true });
     }
   });
+
+describe('restore', () => {
+  async function seeded(dsh: string, h: Awaited<ReturnType<typeof startFakeS3>>) {
+    fs.mkdirSync(path.join(dsh, 'memories'), { recursive: true });
+    fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'backed-a');
+    fs.writeFileSync(path.join(dsh, 'memories/only-backup.md'), 'gone-locally');
+    const svc = makeSvc(h, dsh);
+    const p = await svc.preview();
+    await svc.apply({ previewId: p.previewId, confirm: true });
+    // diverge: a.md newer locally, only-backup.md deleted locally
+    fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'local-edit');
+    fs.unlinkSync(path.join(dsh, 'memories/only-backup.md'));
+    return svc;
+  }
+
+  it('restore to a new directory never touches the live home but materializes the backed-up bytes', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-'));
+    const dest = path.join(dsh, 'restored');
+    try {
+      const svc = await seeded(dsh, h);
+      fs.writeFileSync(path.join(dsh, 'memories/only-backup.md'), 'local-edit-after-backup');
+      const liveBefore = fs.readFileSync(path.join(dsh, 'memories/only-backup.md'), 'utf-8');
+      const rp = await svc.restorePreview({ mode: 'new-dir' });
+      const r = await svc.restoreApply({ previewId: rp.previewId, mode: 'new-dir', destDir: dest, confirm: true });
+      expect(r.ok).toBe(true);
+      expect(fs.readFileSync(path.join(dest, 'memories/a.md'), 'utf-8')).toBe('backed-a');
+      expect(fs.existsSync(path.join(dest, 'memories/only-backup.md'))).toBe(true);
+      expect(fs.readFileSync(path.join(dsh, 'memories/only-backup.md'), 'utf-8')).toBe(liveBefore); // live untouched
+    } finally {
+      fs.rmSync(dsh, { recursive: true, force: true });
+    }
+  });
+
+  it('in-place restore backs up the overwritten file and never deletes unrelated files', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'rs2-'));
+    try {
+      const svc = await seeded(dsh, h);
+      fs.writeFileSync(path.join(dsh, 'memories/unrelated.md'), 'keep-me');
+      const rp = await svc.restorePreview({ mode: 'in-place' });
+      const r = await svc.restoreApply({ previewId: rp.previewId, mode: 'in-place', confirm: true });
+      expect(r.ok).toBe(true);
+      expect(fs.readFileSync(path.join(dsh, 'memories/a.md'), 'utf-8')).toBe('backed-a'); // restored over the local edit
+      expect(fs.existsSync(path.join(dsh, 'memories/only-backup.md'))).toBe(true);       // re-created from backup
+      const baks = fs.readdirSync(path.join(dsh, 'memories')).filter((f) => f.includes('.bak.'));
+      expect(baks.some((f) => f.startsWith('a.md.bak.'))).toBe(true);                    // overwritten target kept a backup
+      expect(fs.readFileSync(path.join(dsh, 'memories/unrelated.md'), 'utf-8')).toBe('keep-me'); // unrelated untouched
+    } finally {
+      fs.rmSync(dsh, { recursive: true, force: true });
+    }
+  });
+});
 });
