@@ -417,7 +417,40 @@ export class SyncService {
    * `onProgress` receives per-phase ticks (hashing emits one per session file).
    * No preview path may copy, backup, restore or publish.
    */
+
+  /**
+   * Wrap a multi-spawn operation in one SSH ControlMaster link (Task 6 + follow-up).
+   * Fail-open: if the master cannot start (MUX_FAILED) or the transport does not
+   * support mux (fakes, rehearsal), run unmuxed — a link optimization, never a
+   * correctness requirement. Preview stays read-only; the mux teardown runs in
+   * finally.
+   */
+  private async withMux<T>(run: () => Promise<T>): Promise<T> {
+    const setMux = (this.transport as any).setMux;
+    if (typeof setMux !== 'function') return run();
+    const baseDir = path.join(this.localDsh, 'dsh-maestro-sync', 'ssh-mux');
+    const { openSshMux } = await import('./ssh-mux.js');
+    let mux: any = null;
+    try {
+      mux = await openSshMux({ host: this.remote, baseDir, runner: this.runner });
+    } catch (e: any) {
+      if (e?.code === 'MUX_FAILED') return run(); // fail-open → unmuxed
+      throw e;
+    }
+    try {
+      setMux(mux);
+      return await run();
+    } finally {
+      setMux(null);
+      await mux.dispose();
+    }
+  }
+
   async preview(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
+    return this.withMux(() => this.previewInner(opts));
+  }
+
+  private async previewInner(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
     const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
     const connection = await this.requireConnection();
     const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth({
@@ -555,6 +588,10 @@ export class SyncService {
    * uploads and commits through the remote CAS helper.
    */
   async apply(req: ApplyRequest): Promise<ApplyResult> {
+    return this.withMux(() => this.applyInner(req));
+  }
+
+  private async applyInner(req: ApplyRequest): Promise<ApplyResult> {
     this.assertApplyRequest(req);
     const preview = getPreview(req.previewId, this.previewDir);
     if (!preview) throw syncFailure('validate', 'STALE_PREVIEW', 'preview not found or expired (60s)');
