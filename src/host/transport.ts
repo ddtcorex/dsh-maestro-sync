@@ -6,6 +6,7 @@ import type { ProcessRunner, ProcessResult } from './process-runner.js';
 import { validateRemoteTarget } from './validation.js';
 import { REMOTE_AGENT_REL, remoteAgentSource, verifyRemoteAgentSource } from './remote-agent.js';
 import { buildRemoteManifestScript, parseRemoteManifest, type RemoteManifestEntry } from './remote-manifest.js';
+import { buildWarmCacheScript } from './remote-cache.js';
 
 export interface SyncTransport {
   /** Resolve the remote user's $HOME as raw bytes (preflight, never shell ~ expansion). */
@@ -33,6 +34,12 @@ export interface SyncTransport {
    * — replaces find + rsync -rcn compare + session hashes for inventory.
    */
   manifest(target: RemoteTarget): Promise<RemoteManifestEntry[]>;
+  /**
+   * Refresh the remote fingerprint cache (<root>/.maestro-sync/fp.tsv, atomic
+   * tmp+rename). NEVER called from preview — only from the push-apply path
+   * (which already writes the remote) or an explicit warm command.
+   */
+  warmCache(target: RemoteTarget): Promise<void>;
   /** Upload materialized bytes for one operation into the remote private stage dir. */
   upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void>;
   /** Install the fixed remote CAS helper under `<root>/.maestro-sync/bin`. */
@@ -176,6 +183,17 @@ export class SshRsyncTransport implements SyncTransport {
       throw Object.assign(new Error(`manifest failed: ${result.stderr.toString()}`), failure('snapshot', 'MANIFEST_FAILED', result.stderr.toString()));
     }
     return parseRemoteManifest(result.stdout);
+  }
+
+  async warmCache(target: RemoteTarget): Promise<void> {
+    const validated = validateRemoteTarget(target);
+    // Refreshes <root>/.maestro-sync/fp.tsv atomically on the remote. Only the
+    // push-apply path (post-commit) or an explicit warm command calls this —
+    // preview must stay strictly read-only.
+    const result = await this.runner.run('ssh', [validated.host, buildWarmCacheScript(validated.dshRoot)], { timeoutMs: 300000 });
+    if (result.exitCode !== 0) {
+      throw Object.assign(new Error(`warmCache failed: ${result.stderr.toString()}`), failure('snapshot', 'WARM_FAILED', result.stderr.toString()));
+    }
   }
 
   async upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void> {

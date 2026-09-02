@@ -230,4 +230,26 @@ describe('apply', () => {
       cleanup();
     }
   });
+
+  it('push apply refreshes the remote fingerprint cache after a successful commit; preview never warms', async () => {
+    const { localRoot, cleanup } = makeTempRoots('apply-warm-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories'));
+      fs.writeFileSync(path.join(localRoot, 'memories/a.md'), 'push-me');
+      const fake = createFakeRemote();
+      const svc = new SyncService({ localDsh: localRoot, remote: 'sync-host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
+      const preview = await svc.preview({ direction: 'push' });
+      const applied = await svc.apply({ previewId: preview.previewId, direction: 'push', confirm: true });
+      expect(applied.ok).toBe(true);
+      expect((fake.calls as any).warmCache ?? 0).toBeGreaterThanOrEqual(1);
+
+      // preview (read-only) must never trigger warmCache
+      const fake2 = createFakeRemote(new Map([['memories/b.md', Buffer.from('b')]]));
+      const svc2 = new SyncService({ localDsh: localRoot, remote: 'sync-host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake2.transport as any });
+      await svc2.preview({ direction: 'pull' });
+      expect((fake2.calls as any).warmCache ?? 0).toBe(0);
+    } finally {
+      cleanup();
+    }
+  });
 });
