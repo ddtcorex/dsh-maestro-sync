@@ -187,9 +187,18 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
 .sync-spin { display: inline-block; animation: sync-spin 0.8s linear infinite; font-size: 14px; line-height: 1; }
 
 /* ---- breakpoints ---- */
+@media (max-width: 640px) {
+  [data-sync-fields] { gap: 8px; }
+  [data-sync-field] { flex: 1 1 0; min-width: 0; padding: 7px 8px; border-radius: 8px; }
+  [data-sync-field-label] { font-size: 10px; line-height: 12px; }
+  [data-sync-field-value] { font-size: 12px; line-height: 14px; }
+}
 @media (max-width: 480px) {
   [data-sync-actions] > [data-sync-btn] { flex: 1 1 auto; }
-  [data-sync-fields] { flex-direction: column; }
+  [data-sync-fields] { flex-direction: row; gap: 6px; }
+  [data-sync-field] { flex: 1 1 0; min-width: 0; padding: 6px 8px; border-radius: 8px; }
+  [data-sync-field-label] { font-size: 10px; line-height: 11px; }
+  [data-sync-field-value] { font-size: 11px; line-height: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal; }
 }
 @media (min-width: 640px) {
   [data-sync-dialog-overlay] { align-items: center; padding: 24px; }
