@@ -20,7 +20,9 @@ import * as os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { mergeDelimited } from './merge.js';
 import { mergeSessionBuffers } from './session-plan.js';
-import { snapshotFile } from './snapshot.js';
+import { snapshotFile, kindForPath } from './snapshot.js';
+import { hashFiles } from './hashing.js';
+import { loadIndex, saveIndex, probeIndex, matchesStat, statFingerprint } from './fingerprint.js';
 import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview, storePreview } from './sync-plan.js';
 import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
 import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction, SyncProgress } from './sync-types.js';
@@ -99,6 +101,7 @@ export interface SyncServiceOpts {
   remote?: string;
   remoteDsh?: string;
   previewDir?: string;
+  cacheDir?: string;
   fs?: any;
   runner?: ProcessRunner;
   transport?: SyncTransport;
@@ -113,6 +116,7 @@ export class SyncService {
   remote: string;
   remoteDsh: string;
   previewDir: string;
+  cacheDir: string;
   fs: any;
   runner: ProcessRunner;
   transport: SyncTransport;
@@ -123,6 +127,8 @@ export class SyncService {
     this.remoteDsh = opts.remoteDsh || process.env.REMOTE_DSH_PATH || '~/.dsh';
     // Sidecar preview store shared by every CLI process (preview -> separate apply run).
     this.previewDir = opts.previewDir ?? path.join(this.localDsh, 'dsh-maestro-sync', 'previews');
+    // Fingerprint cache sidecar — a pure speed hint; write targets are always re-hashed.
+    this.cacheDir = opts.cacheDir ?? path.join(this.localDsh, 'dsh-maestro-sync', 'cache');
     this.fs = opts.fs || nodeFs;
     this.runner = opts.runner ?? createProcessRunner();
     this.transport = opts.transport ?? createTransport(this.runner);
@@ -271,11 +277,17 @@ export class SyncService {
   }
 
   /**
-   * Hash local files and stage the remote eligible files once (argv-only rsync
-   * --files-from, raw Buffers preserved). Session artifacts stay binary-exact.
-   * When `sessionsCountOnly` is set, session files are NOT staged: their remote
-   * sha256+size are fetched over one ssh (`sha256sum`, streaming per file) so
-   * preview can count added/updated/deleted without transferring content.
+   * Snapshot both sides with the manifest-first pipeline:
+   * - remote: ONE `transport.manifest` pass (path/sha256/size; NUL-framed,
+   *   validated). No `list`+`rsync -rcn`+`hashes`, and identical sessions are
+   *   counted from the manifest without byte transfer.
+   * - local: the fingerprint cache (dev+ino+size+mtimeNs+ctimeNs) supplies
+   *   known SHA-256 values without re-reading files; only cache misses are
+   *   stream-hashed. Content is loaded lazily for exactly the files a plan or
+   *   merge needs — identical files are never read into memory.
+   * The cache is a pure speed hint: every file apply will WRITE is re-read and
+   * re-hashed at write time (see apply), so a stale cache can never publish a
+   * wrong mutation target.
    */
   private async snapshotBoth(opts: { sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void } = {}): Promise<{
     target: RemoteTarget;
@@ -287,116 +299,138 @@ export class SyncService {
   }> {
     const progress = (phase: SyncProgress['phase'], current: number, total: number, file?: string) => opts.onProgress?.({ phase, current, total, file });
     const isSession = (p: string) => p.endsWith('.jsonl.zstd');
+    const fsMod = this.fs;
     const target = await this.requireTarget();
     const localPaths = this.listLocalFiles();
-    const rawRemote = await this.transport.list(target);
-    const remotePaths = this.remoteRelativePaths(target, rawRemote);
+    const remoteManifest = await this.transport.manifest(target);
+    const remoteSnapshots = remoteManifest.map((e) => ({ path: e.path, sha256: e.sha256, size: e.size, kind: kindForPath(e.path) }));
+    const remoteSet = new Set(remoteManifest.map((e) => e.path));
 
-    const localContents = new Map<string, Buffer>();
+    // ---- local side: fingerprint cache fast-path, stream-hash only misses ----
+    const index = loadIndex(this.cacheDir);
     const localSnapshots: FileSnapshot[] = [];
+    const stale: string[] = [];
     for (const p of localPaths) {
-      const buf = await this.readLocalBuffer(p);
-      localContents.set(p, buf);
-      localSnapshots.push(snapshotFile(p, buf));
+      const entry = probeIndex(p, index);
+      let st: any = null;
+      try {
+        st = typeof fsMod.statSync === 'function' ? fsMod.statSync(path.join(this.localDsh, p), { bigint: true } as any) : null;
+      } catch {
+        st = null;
+      }
+      if (entry && st && matchesStat(entry, st)) {
+        localSnapshots.push({ path: p, sha256: entry.sha256, size: entry.size, kind: kindForPath(p) });
+      } else {
+        stale.push(p);
+      }
     }
+    let hashedCount = 0;
+    const staleHashes = await hashFiles(fsMod, this.localDsh, stale, {
+      onFile: (h) => {
+        hashedCount++;
+        progress('hashing', hashedCount, stale.length, h.path);
+      },
+    });
+    for (const h of staleHashes) {
+      localSnapshots.push({ path: h.path, sha256: h.sha256, size: h.size, kind: kindForPath(h.path) });
+      try {
+        const st = typeof fsMod.statSync === 'function' ? fsMod.statSync(path.join(this.localDsh, h.path), { bigint: true } as any) : null;
+        if (st) index.entries[h.path] = { ...statFingerprint(st), sha256: h.sha256 };
+      } catch {
+        // stat races are tolerable — the entry simply misses next run
+      }
+    }
+    if (staleHashes.length > 0 || localPaths.length > 0) saveIndex(this.cacheDir, index);
+    localSnapshots.sort((a, b) => a.path.localeCompare(b.path));
 
+    // ---- changed set: anything not byte-identical on both sides ----
+    const localMap = new Map(localSnapshots.map((s) => [s.path, s]));
+    const remoteMap = new Map(remoteManifest.map((e) => [e.path, e]));
+    const changed: string[] = [];
+    for (const p of [...localMap.keys(), ...remoteMap.keys()]) {
+      const ls = localMap.get(p);
+      const rs = remoteMap.get(p);
+      if (!ls || !rs || ls.sha256 !== rs.sha256) changed.push(p);
+    }
+    changed.sort((a, b) => a.localeCompare(b));
+
+    // ---- content maps: only changed files carry content (lazy local reads) ----
+    const localContents = new Map<string, Buffer>();
     const remoteContents = new Map<string, Buffer>();
-    const remoteSnapshots: FileSnapshot[] = [];
+    const localBufferOf = (rel: string): Buffer | undefined => {
+      if (localContents.has(rel)) return localContents.get(rel);
+      try {
+        const d = fsMod.readFileSync(path.join(this.localDsh, rel));
+        const buf = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
+        localContents.set(rel, buf);
+        return buf;
+      } catch {
+        return undefined;
+      }
+    };
+
     let stagingDir: string | null = null;
     let cleanup: () => void = () => {};
-    if (remotePaths.length > 0) {
-      // Stage only the change candidates: checksum-compare (rsync -rcn) first,
-      // so a real DSH home with hundreds of unchanged session files is never
-      // transferred wholesale.
-      let changed: string[] = [];
+    const ensureStaging = () => {
+      if (stagingDir !== null) return stagingDir;
+      stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
       try {
-        const compareOut = await this.transport.compare(target, this.localDsh, remotePaths);
-        const changedSet = new Set(compareOut.toString('utf-8').split('\n').map((s) => s.trim()).filter(Boolean));
-        changed = remotePaths.filter((p) => changedSet.has(p));
+        if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
+        else nodeFs.mkdirSync(stagingDir, { recursive: true });
       } catch (e: any) {
-        throw syncFailure('snapshot', 'COMPARE_FAILED', `remote compare failed: ${e?.message ?? String(e)}`);
+        throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
       }
-      if (changed.length > 0) {
-        const isSessionLocal = isSession;
-        const sessionChanged = opts.sessionsCountOnly ? changed.filter(isSessionLocal) : [];
-        const stageChanged = opts.sessionsCountOnly ? changed.filter((p) => !isSessionLocal(p)) : changed;
+      cleanup = () => {
+        try {
+          if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
+          else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
+        } catch {}
+      };
+      return stagingDir;
+    };
+    const readStaged = (rel: string): Buffer => {
+      const stagedPath = path.join(ensureStaging(), rel);
+      const data = typeof fsMod.readFileSync === 'function' ? fsMod.readFileSync(stagedPath) : nodeFs.readFileSync(stagedPath);
+      return Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(String(data), 'utf-8');
+    };
 
-        // Count-only sessions: fetch remote sha256+size over one streaming ssh
-        // (as fast as a checksum pass, no byte transfer) and emit a progress tick
-        // per file. Never read into remoteContents — preview only counts them.
-        if (sessionChanged.length > 0) {
-          let hashed = 0;
-          progress('hashing', 0, sessionChanged.length);
-          const hashes = await this.transport.hashes(target, sessionChanged, (h) => {
-            hashed++;
-            progress('hashing', hashed, sessionChanged.length, h.path);
-          });
-          for (const h of hashes) {
-            remoteSnapshots.push({ path: h.path, sha256: h.sha256, size: h.size, kind: 'session' });
-          }
-        }
+    const sessionChanged = changed.filter(isSession);
+    const stageChanged = changed.filter((p) => !isSession(p) && remoteSet.has(p)); // only paths the remote actually has
+    // Apply (non count-only) needs real session bytes: both-side merges AND
+    // remote-only copies. Count-only previews count sessions from the manifest.
+    const stageSessions = opts.sessionsCountOnly ? [] : sessionChanged.filter((p) => remoteSet.has(p));
 
-        if (stageChanged.length > 0) {
-          stagingDir = path.join(os.tmpdir(), `maestro-sync-stage-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`);
-          const fsMod = this.fs;
-          try {
-            if (typeof fsMod.mkdirSync === 'function') fsMod.mkdirSync(stagingDir, { recursive: true });
-            else nodeFs.mkdirSync(stagingDir, { recursive: true });
-          } catch (e: any) {
-            throw syncFailure('snapshot', 'STAGE_CREATE_FAILED', `cannot create staging dir: ${e?.message}`);
-          }
-          cleanup = () => {
-            try {
-              if (typeof fsMod.rmSync === 'function') fsMod.rmSync(stagingDir!, { recursive: true, force: true });
-              else nodeFs.rmSync(stagingDir!, { recursive: true, force: true });
-            } catch {}
-          };
-          progress('staging', 0, stageChanged.length);
-          try {
-            await this.transport.stage(target, stageChanged, stagingDir);
-          } catch (e: any) {
-            throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
-          }
-          for (const p of stageChanged) {
-            const stagedPath = path.join(stagingDir, p);
-            const fsMod2 = this.fs;
-            let data: Buffer;
-            try {
-              if (typeof fsMod2.readFileSync === 'function') {
-                const d = fsMod2.readFileSync(stagedPath);
-                data = Buffer.isBuffer(d) ? Buffer.from(d) : Buffer.from(String(d), 'utf-8');
-              } else {
-                data = nodeFs.readFileSync(stagedPath);
-              }
-            } catch (e: any) {
-              throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
-            }
-            remoteContents.set(p, data);
-            remoteSnapshots.push(snapshotFile(p, data));
-          }
-        }
+    if (stageChanged.length > 0) {
+      ensureStaging();
+      progress('staging', 0, stageChanged.length);
+      try {
+        await this.transport.stage(target, stageChanged, stagingDir!);
+      } catch (e: any) {
+        throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
       }
-      // Files the checksum compare proved byte-identical are represented by the
-      // local buffer (same bytes) — never transferred, but still content-aware
-      // for the pull/push plan (a push must see them as identical, not absent).
-      for (const p of remotePaths) {
-        if (remoteContents.has(p)) continue;
-        const localBuf = localContents.get(p);
-        if (!localBuf) continue;
-        if (opts.sessionsCountOnly && isSession(p)) {
-          // identical sessions keep their snapshot so the count-only preview
-          // revision matches the apply re-inventory (sha == local bytes);
-          // changed sessions were already snapshotted by hashes — never let a
-          // local fill overwrite them; never load content (counted, not merged).
-          if (!remoteSnapshots.some((s) => s.path === p)) {
-            remoteSnapshots.push(snapshotFile(p, localBuf));
-          }
-          continue;
+      for (const p of stageChanged) {
+        try {
+          remoteContents.set(p, readStaged(p));
+        } catch (e: any) {
+          throw syncFailure('snapshot', 'STAGE_READ_FAILED', `cannot read staged file ${p}: ${e?.message}`, p);
         }
-        remoteContents.set(p, localBuf);
-        remoteSnapshots.push(snapshotFile(p, localBuf));
       }
     }
+    if (stageSessions.length > 0) {
+      // Apply (non count-only) needs real session bytes for merges and copies.
+      ensureStaging();
+      try {
+        await this.transport.stage(target, stageSessions, stagingDir!);
+      } catch (e: any) {
+        throw syncFailure('snapshot', 'STAGE_FAILED', `remote session staging failed: ${e?.message ?? String(e)}`);
+      }
+      for (const p of stageSessions) remoteContents.set(p, readStaged(p));
+    }
+    // Local content for changed files: only read what a plan/merge may touch.
+    for (const p of changed) {
+      if (localMap.has(p)) localBufferOf(p);
+    }
+
     return { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup };
   }
 

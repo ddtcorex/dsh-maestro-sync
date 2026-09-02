@@ -208,4 +208,35 @@ describe('SyncService', () => {
       cleanup();
     }
   });
+
+  it('preview uses the remote manifest and the fingerprint cache: unchanged files are not re-hashed, only changed remote files are staged', async () => {
+    const { localRoot, cleanup } = makeTempRoots('preview-manifest-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'memories/daily/same.md'), 'same-bytes');
+      fs.writeFileSync(path.join(localRoot, 'memories/daily/new.md'), 'local-new');
+      const fake = createFakeRemote(new Map([
+        ['memories/daily/same.md', Buffer.from('same-bytes')],
+        ['memories/daily/remote.md', Buffer.from('remote-only')],
+      ]));
+      const cacheDir = path.join(localRoot, '.fp-cache');
+      const svc = new SyncService({ localDsh: localRoot, remote: 'sync-host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any, cacheDir });
+      const preview = await svc.preview({ direction: 'pull' });
+      const sameAct = preview.actions.find((a: any) => a.path === 'memories/daily/same.md');
+      expect(sameAct!.action).toBe('skip');               // byte-identical → skip, content never read
+      const remoteAct = preview.actions.find((a: any) => a.path === 'memories/daily/remote.md');
+      expect(remoteAct!.action).toBe('copy');             // remote-only → pull copy
+      const newAct = preview.actions.find((a: any) => a.path === 'memories/daily/new.md');
+      expect(newAct!.action).toBe('skip');                // local-only under pull → skip
+      // manifest replaced list+compare+hashes: the fake's list/compare were never called
+      expect(fake.calls.list).toBe(0);
+      // only the true remote-only file was staged
+      const stagedPaths = fake.calls.stage.flatMap((s: any) => s.paths);
+      expect(stagedPaths).toContain('memories/daily/remote.md');
+      expect(stagedPaths).not.toContain('memories/daily/new.md');
+      expect(stagedPaths).not.toContain('memories/daily/same.md');
+    } finally {
+      cleanup();
+    }
+  });
 });
