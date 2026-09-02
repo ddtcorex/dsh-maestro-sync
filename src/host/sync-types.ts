@@ -82,7 +82,7 @@ export interface SyncProgress {
 
 /** Job state exposed by RPC while a preview runs in the background. */
 export interface PreviewJobState {
-  status: 'running' | 'done' | 'error';
+  status: 'running' | 'done' | 'error' | 'cancelled';
   progress: SyncProgress;
   preview?: SyncPreview;
   error?: string;

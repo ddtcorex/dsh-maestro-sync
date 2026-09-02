@@ -106,4 +106,26 @@ describe('host', () => {
     expect(plugin.inject).toContain('connection');
     expect(mod.RPC_CHANNEL).toBe('/dsh-maestro-sync');
   });
+
+  it('previewCancel errors on an unknown job and cancels a running job', async () => {
+    const { rpcHandler } = await bootPlugin();
+    const missing = await rpcHandler('previewCancel', { jobId: 'deadbeef' });
+    expect(missing).toEqual({ ok: false, error: { code: 'maestro-sync/preview-job', message: 'preview job not found', details: {} } });
+
+    const hang = new Promise(() => {});
+    const previewSpy = vi.spyOn(SyncService.prototype, 'preview').mockImplementation(async () => {
+      await hang;
+      return {} as any;
+    });
+    try {
+      const started = await rpcHandler('previewStart', { direction: 'pull' });
+      const jobId = started.value.jobId;
+      const cancel = await rpcHandler('previewCancel', { jobId });
+      expect(cancel).toEqual({ ok: true, value: { ok: true } });
+      const st = await rpcHandler('previewStatus', { jobId });
+      expect(st.value.status).toBe('cancelled');
+    } finally {
+      previewSpy.mockRestore();
+    }
+  });
 });

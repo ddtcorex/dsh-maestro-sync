@@ -265,6 +265,7 @@ export default {
                 const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
                 const jobId = randomBytes(8).toString('hex');
                 const state: PreviewJobState = { status: 'running', progress: { phase: 'listing', current: 0, total: 1 } };
+                (state as any).cancelled = false;
                 (state as any).ts = Date.now();
                 previewJobs.set(jobId, state);
                 if (previewJobs.size > MAX_PREVIEW_JOBS) {
@@ -278,10 +279,14 @@ export default {
                       sessionsCountOnly: true,
                       onProgress: (p) => {
                         const s = previewJobs.get(jobId);
-                        if (s) {
+                        if (s && s.status !== 'cancelled') {
                           s.progress = p;
                           (s as any).ts = Date.now();
                         }
+                      },
+                      shouldStop: () => {
+                        const s = previewJobs.get(jobId);
+                        return s !== undefined && (s as any).cancelled === true;
                       },
                     });
                     const s = previewJobs.get(jobId);
@@ -293,13 +298,24 @@ export default {
                   } catch (e: any) {
                     const s = previewJobs.get(jobId);
                     if (s) {
-                      s.status = 'error';
-                      s.error = e?.message ?? String(e);
+                      if (s.status !== 'cancelled') {
+                        s.status = e?.code === 'CANCELLED' ? 'cancelled' : 'error';
+                        s.error = e?.message ?? String(e);
+                      }
                       (s as any).ts = Date.now();
                     }
                   }
                 })();
                 return okCarrier({ jobId, status: 'running' });
+              }
+              case 'previewCancel': {
+                const jobId = args && (args as any).jobId;
+                const s = jobId && typeof jobId === 'string' ? previewJobs.get(jobId) : undefined;
+                if (!s) return failCarrier('preview job not found', 'maestro-sync/preview-job');
+                (s as any).cancelled = true;
+                s.status = 'cancelled';
+                (s as any).ts = Date.now();
+                return okCarrier({ ok: true });
               }
               case 'previewStatus': {
                 const jobId = args && (args as any).jobId;
