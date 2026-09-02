@@ -7,6 +7,7 @@
 // the parser sorts deterministically. mtimeSec is informational only — it is
 // never an equality proof (equality uses sha256+size).
 import { normalizeEligiblePath } from './validation.js';
+import { remoteCachePath } from './remote-cache.js';
 
 export interface RemoteManifestEntry {
   path: string;
@@ -17,20 +18,37 @@ export interface RemoteManifestEntry {
 
 export function buildRemoteManifestScript(dshRoot: string): string {
   // Fixed script; dshRoot is the validated absolute root (same trust rule as transport.list).
+  // Cache-aware, READ-ONLY: it consults <root>/.maestro-sync/fp.tsv and reuses a
+  // cached sha256 when the file's ino+size+mtimeNs+ctimeNs triple (GNU stat
+  // '%.Y'/'%.Z' ns fractions) still matches, skipping sha256sum for unchanged
+  // files. It NEVER writes — the cache is refreshed only by the warm script
+  // (push-apply / explicit warm command), so preview stays strictly read-only.
   // Every loop-body statement must end with ';' — space-separated assignments
   // inside a `do...done` one-liner break bash's parser ("unexpected end of file
-  // from while"), verified 2026-09-02.
+  // from while"), verified 2026-09-02 (commit f4b5892).
+  const cache = remoteCachePath(dshRoot);
   const body = [
-    `rel=\${f#${dshRoot}/};`,
-    `sha=$(sha256sum -- "$f" | awk '{print $1}');`,
-    `size=$(wc -c < "$f" 2>/dev/null || echo 0);`,
-    `mtime=$(stat -c %Y -- "$f" 2>/dev/null || echo 0);`,
+    `st=\${rec%%$'\\t'*}; abs=\${rec#*$'\\t'}; rel=\${abs#${dshRoot}/};`,
+    `hit="";`,
+    `[ -n "$cache" ] && hit=$(printf '%s\\n' "$cache"`,
+    `| awk -F '\\t' -v r="$rel" -v s="$st" '$1==r && ($2" "$3" "$4" "$5)==s { print $6"\\t"$3"\\t"$4 }'`,
+    `| head -n 1);`,
+    `if [ -n "$hit" ]; then`,
+    `sha=\${hit%%$'\\t'*}; size=\${hit#*$'\\t'}; size=\${size%%$'\\t'*}; mtime=\${hit##*$'\\t'};`,
     `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$size" "$mtime" "$rel";`,
+    `else`,
+    `sha=$(sha256sum -- "${dshRoot}/$rel" 2>/dev/null | awk '{print $1}');`,
+    `set -- $st;`,
+    `mtime="$3";`,
+    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$2" "$mtime" "$rel";`,
+    `fi;`,
   ].join(' ');
   return [
+    `cache="$(cat ${cache} 2>/dev/null || true)";`,
     `find ${dshRoot}/memories ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
-    `| while IFS= read -r -d '' f; do ${body} done`,
+    `| xargs -0 stat --printf='%i %s %.Y %.Z\\t%n\\0' 2>/dev/null`,
+    `| while IFS= read -r -d '' rec; do ${body} done`,
   ].join(' ');
 }
 
