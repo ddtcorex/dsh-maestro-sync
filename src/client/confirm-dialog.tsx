@@ -16,8 +16,12 @@ export function ConfirmDialog(props: {
   onShowMore: () => void
   onCancel: () => void
   onApply: () => void
+  /** R2 flows: title + target label override; defaults keep the remote-sync wording. */
+  kind?: 'sync' | 'backup' | 'restore' | 'gc'
+  title?: string
+  targetLabel?: string
 }): React.ReactElement {
-  const { preview, previewDirection, remoteHost, busy, actionLimit, planAgeSecs, onShowMore, onCancel, onApply } = props
+  const { preview, previewDirection, remoteHost, busy, actionLimit, planAgeSecs, onShowMore, onCancel, onApply, title, targetLabel } = props
   const actions = (preview?.actions ?? []).slice(0, actionLimit)
   const hasMore = (preview?.actions?.length ?? 0) > actionLimit
   const summary = preview?.summary ?? {}
@@ -34,10 +38,10 @@ export function ConfirmDialog(props: {
         <div data-sync-dialog-top="">
           <div data-sync-dialog-heading="">
             <div id="sync-dialog-title" data-sync-dialog-title="">
-              Apply {previewDirection} — preview {previewId}
+              {title ?? `Apply ${previewDirection} — preview ${previewId}`}
             </div>
             <div data-sync-dialog-desc="">
-              {remoteHost} · plan {planAgeSecs}s before expiry · {summary.copied ?? 0} copy · {summary.merged ?? 0} merge (+{summary.added ?? 0} added) · {summary.skipped ?? 0} skip · {summary.conflicts ?? 0} conflict
+              {targetLabel ?? remoteHost} · plan {planAgeSecs}s before expiry · {summary.copied ?? 0} copy · {summary.merged ?? 0} merge (+{summary.added ?? 0} added) · {summary.skipped ?? 0} skip · {summary.conflicts ?? 0} conflict
             </div>
           </div>
           <button type="button" data-sync-dialog-close="" aria-label="Cancel" onClick={onCancel} disabled={busy}>

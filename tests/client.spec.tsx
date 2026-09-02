@@ -168,4 +168,37 @@ describe('SyncPanel', () => {
     const rowsAfter = dialog.querySelectorAll('[data-action-row]').length;
     expect(rowsAfter).toBe(10);
   });
+
+  it('R2 tab renders when selected; Remote tab keeps the preview buttons', async () => {
+    const user = userEvent.setup();
+    const rpc = vi.fn(async (_ch: string, method: string) => {
+      if (method === 'backupStatus') return carrier({ configured: true, source: 'env', bucket: 'maestro-backup', prefix: 'v1/hosts/t/', lastManifest: null, eligible: { md: 2, sessions: 3 } });
+      if (method === 'status') return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
+      if (method === 'backupPreview') return carrier({ previewId: 'pv'.repeat(16), summary: { identical: 1, missing: 1, addedBytes: 10 } });
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx((_ch: string, m: string) => rpc(_ch, m)) as any }));
+    expect(await screen.findByTestId('sync-tab-r2')).toBeInTheDocument();
+    expect(screen.getByTestId('sync-tab-remote')).toBeInTheDocument();
+    // Remote tab (default) keeps the sync preview pin
+    expect(screen.getByTestId('sync-preview-pull')).toBeInTheDocument();
+    await user.click(screen.getByTestId('sync-tab-r2'));
+    expect(await screen.findByText(/maestro-backup/i)).toBeInTheDocument();
+    expect(screen.getByTestId('r2-preview-backup')).toBeEnabled();
+    await user.click(screen.getByTestId('r2-preview-backup'));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('R2 tab shows Not configured and disables backup actions when no bucket is set', async () => {
+    const user = userEvent.setup();
+    const rpc = vi.fn(async (_ch: string, method: string) => {
+      if (method === 'backupStatus') return carrier({ configured: false, source: 'none', bucket: '', prefix: '', lastManifest: null, eligible: { md: 0, sessions: 0 } });
+      if (method === 'status') return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx((_ch: string, m: string) => rpc(_ch, m)) as any }));
+    await user.click(screen.getByTestId('sync-tab-r2'));
+    expect((await screen.findAllByText(/not configured/i)).length).toBeGreaterThan(0);
+    expect(screen.getByTestId('r2-preview-backup')).toBeDisabled();
+  });
 });

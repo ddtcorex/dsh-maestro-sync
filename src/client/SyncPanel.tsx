@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useSync, type Bucket } from './use-sync.js'
+import { R2SyncPanel } from './R2SyncPanel.js'
 import { ConfirmDialog } from './confirm-dialog.js'
 import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanSummary } from './ui.js'
 
@@ -67,7 +68,7 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     )
   }
 
-  return (
+  const renderRemote = () => (
     <div data-sync-root="" aria-busy={busy || checking}>
       {/* Header — shared Maestro badge + title + live status line (same as Maestro Jobs) */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
@@ -221,6 +222,21 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
       <div data-sync-muted="" style={{ textAlign: 'center' }}>
         Notes and sessions are merged — never overwritten. Apply always requires confirmation.
       </div>
+    </div>
+  )
+
+  const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
+  return (
+    <div data-sync-shell="">
+      <div data-sync-tabs="" role="tablist" aria-label="Maestro Sync modes">
+        <button data-testid="sync-tab-remote" role="tab" aria-selected={tab === 'remote'} data-sync-tab="" onClick={() => setTab('remote')}>
+          Remote Sync
+        </button>
+        <button data-testid="sync-tab-r2" role="tab" aria-selected={tab === 'r2'} data-sync-tab="" onClick={() => setTab('r2')}>
+          R2 Sync
+        </button>
+      </div>
+      {tab === 'remote' ? renderRemote() : <R2SyncPanel ctx={props.ctx} />}
     </div>
   )
 }
