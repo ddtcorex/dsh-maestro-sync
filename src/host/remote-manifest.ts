@@ -30,7 +30,7 @@ export function buildRemoteManifestScript(dshRoot: string): string {
   const body = [
     `st=\${rec%%$'\\t'*}; abs=\${rec#*$'\\t'}; rel=\${abs#${dshRoot}/};`,
     `hit="";`,
-    `[ -n "$cache" ] && hit=$(printf '%s\\n' "$cache"`,
+    `[ "$LOOKUP" = "1" ] && hit=$(printf '%s\\n' "$cache"`,
     `| awk -F '\\t' -v r="$rel" -v s="$st" '$1==r && ($2" "$3" "$4" "$5)==s { print $6"\\t"$3"\\t"$4 }'`,
     `| head -n 1);`,
     `if [ -n "$hit" ]; then`,
@@ -44,6 +44,7 @@ export function buildRemoteManifestScript(dshRoot: string): string {
     `fi;`,
   ].join(' ');
   return [
+    `LOOKUP=0; [ -s "${cache}" ] && LOOKUP=1;`,
     `cache="$(cat ${cache} 2>/dev/null || true)";`,
     `find ${dshRoot}/memories ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
