@@ -45,15 +45,17 @@ export interface SignedRequest {
 export function signRequest(opts: SignRequestOpts): SignedRequest {
   const amzDate = isoDate(opts.now);
   const date = scopeDate(opts.now);
-  const headers: Record<string, string> = {
+  const raw: Record<string, string> = {
     host: opts.host,
     'x-amz-content-sha256': opts.bodySha256,
     'x-amz-date': amzDate,
     ...opts.headers,
   };
-  const signedKeys = Object.keys(headers)
-    .map((k) => k.toLowerCase())
-    .sort();
+  // Signed headers are lower-cased; look up through a normalized map so mixed
+  // case (e.g. 'Content-Length') never hits an undefined value.
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) headers[k.toLowerCase()] = v;
+  const signedKeys = Object.keys(headers).sort();
   const canonicalHeaders = signedKeys.map((k) => `${k}:${headers[k]!.trim().replace(/\s+/g, ' ')}\n`).join('');
   const canonicalQuery = (opts.query ?? '').split('&').filter(Boolean).sort().join('&');
   const canonicalRequest = [
