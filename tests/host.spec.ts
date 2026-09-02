@@ -27,12 +27,12 @@ describe('host', () => {
   it('registers five complete tool definitions and the loopback RPC channel', async () => {
     const { register, handle, plugin } = await bootPlugin();
     expect(plugin.inject).toEqual(expect.arrayContaining(['tools', 'connection']));
-    expect(register).toHaveBeenCalledTimes(5);
+    expect(register.mock.calls.length).toBeGreaterThanOrEqual(11); // 5 sync tools + 6 backup/restore/gc tools
     expect(register.mock.calls.every((call: any[]) => call.length === 1)).toBe(true);
     const definitions = register.mock.calls.map((call: any[]) => call[0]);
     const names = definitions.map((definition: any) => definition.name);
     expect(names).toEqual(
-      expect.arrayContaining(['maestro_sync_preview', 'maestro_sync_apply', 'maestro_sync_pull', 'maestro_sync_push', 'maestro_sync_status']),
+      expect.arrayContaining(['maestro_sync_preview', 'maestro_sync_apply', 'maestro_sync_pull', 'maestro_sync_push', 'maestro_sync_status', 'maestro_backup_preview', 'maestro_backup_apply', 'maestro_restore_preview', 'maestro_restore_apply', 'maestro_backup_gc_preview', 'maestro_backup_gc_apply']),
     );
     for (const definition of definitions) {
       expect(definition.parameters).toMatchObject({ type: 'object' });

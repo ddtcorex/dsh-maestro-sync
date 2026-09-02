@@ -8,6 +8,10 @@ import { randomBytes } from 'node:crypto';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { SyncService } from './sync-service.js';
 import { loadSyncConfig } from './config.js';
+import { BackupService } from './backup-service.js';
+import { S3ObjectStore } from './s3-object-store.js';
+import { resolveBackupTarget } from './backup-config.js';
+import { load } from '@ddtcorex/dsh-maestro-config-lib';
 import type { PreviewJobState } from './sync-types.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
@@ -126,6 +130,21 @@ function textTool(name: string, description: string, params: Record<string, any>
 export default {
   inject: ['tools', 'connection'] as const,
   apply(ctx: any) {
+    const makeBackupService = async () => {
+      const doc = (await load().catch(() => ({ domains: {} as any }))) as any;
+      const { config, secrets } = await resolveBackupTarget(doc, process.env as any);
+      if (!config.endpoint) throw Object.assign(new Error('backup endpoint not configured'), { phase: 'validate', code: 'MISSING_ENDPOINT' });
+      const store = new S3ObjectStore({ endpoint: config.endpoint, region: config.region, accessKeyId: secrets.accessKeyId, secretAccessKey: secrets.secretAccessKey });
+      const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      return new BackupService({
+        localDsh: dshHome,
+        store,
+        target: { provider: config.provider, bucket: config.bucket, prefix: config.prefix, hostId: config.prefix.split('/')[2] ?? 'host' },
+        previewDir: path.join(dshHome, 'dsh-maestro-sync', 'previews'),
+        cacheDir: path.join(dshHome, 'dsh-maestro-sync', 'cache'),
+      });
+    };
+
     const makeService = async () => {
       const cfg = await loadSyncConfig();
       return new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
@@ -225,6 +244,61 @@ export default {
             return JSON.stringify({ ok: true, previewId: preview.previewId, revision: preview.revision, summary: preview.summary });
           },
         ),
+      ),
+    );
+
+
+    // Backup / restore / GC tools (R2 Sync tab; mutation routes are
+    // preview-bound apply(confirm:true) — mirroring the sync tools).
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_backup_preview', 'Read-only backup preview: what a Backup Apply would upload (missing blobs + bytes).', { direction: { type: 'string' } }, async () => {
+          const r = await (await makeBackupService()).preview();
+          return JSON.stringify({ ok: true, previewId: r.previewId, summary: r.summary });
+        }),
+      ),
+    );
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_backup_apply', 'Apply a backup preview (single-use): upload blobs, write the manifest, CAS-advance HEAD.', { previewId: { type: 'string' }, confirm: { type: 'boolean' } }, async (a) => {
+          if (a.confirm !== true) return JSON.stringify({ ok: false, error: 'backup apply requires confirm:true' });
+          const r = await (await makeBackupService()).apply({ previewId: a.previewId, confirm: true });
+          return JSON.stringify({ ok: r.ok, committed: r.committed, failures: r.failures });
+        }),
+      ),
+    );
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_restore_preview', 'Read-only restore preview from the backup HEAD manifest (new-dir or in-place).', { mode: { type: 'string' } }, async (a) => {
+          const r = await (await makeBackupService()).restorePreview({ mode: a.mode === 'new-dir' ? 'new-dir' : 'in-place' });
+          return JSON.stringify({ ok: true, previewId: r.previewId, summary: r.summary });
+        }),
+      ),
+    );
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_restore_apply', 'Apply a restore preview: materialize under a new dir or in place (backups overwritten targets).', { previewId: { type: 'string' }, mode: { type: 'string' }, destDir: { type: 'string' }, confirm: { type: 'boolean' } }, async (a) => {
+          if (a.confirm !== true) return JSON.stringify({ ok: false, error: 'restore apply requires confirm:true' });
+          const r = await (await makeBackupService()).restoreApply({ previewId: a.previewId, mode: a.mode === 'new-dir' ? 'new-dir' : 'in-place', destDir: a.destDir, confirm: true });
+          return JSON.stringify({ ok: r.ok, committed: r.committed, failures: r.failures });
+        }),
+      ),
+    );
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_backup_gc_preview', 'Read-only retention GC preview: unreachable blobs + freed bytes.', {}, async () => {
+          const r = await (await makeBackupService()).gcPreview({});
+          return JSON.stringify({ ok: true, previewId: r.previewId, deletable: r.deletableBlobs.length, freedBytes: r.freedBytes });
+        }),
+      ),
+    );
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool('maestro_backup_gc_apply', 'Apply a GC preview: delete the listed unreachable blobs.', { previewId: { type: 'string' }, confirm: { type: 'boolean' } }, async (a) => {
+          if (a.confirm !== true) return JSON.stringify({ ok: false, error: 'gc apply requires confirm:true' });
+          const r = await (await makeBackupService()).gcApply({ previewId: a.previewId, confirm: true });
+          return JSON.stringify({ ok: r.ok, deleted: r.deleted, freedBytes: r.freedBytes });
+        }),
       ),
     );
 
@@ -342,6 +416,53 @@ export default {
                 const r = await svc.apply({ previewId, direction, confirm: true });
                 if (r.ok) await restoreTunnelProfile();
                 return okCarrier({ revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures });
+              }
+              case 'backupStatus': {
+                try {
+                  const bsvc = await makeBackupService();
+                  const head = await bsvc.readHeadManifest();
+                  return okCarrier({
+                    configured: true,
+                    source: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).source,
+                    bucket: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).config.bucket,
+                    prefix: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).config.prefix,
+                    lastManifest: head ? head.key : null,
+                    eligible: { md: bsvc.listEligibleFiles().filter((p: string) => p.endsWith('.md')).length, sessions: bsvc.listEligibleFiles().filter((p: string) => p.endsWith('.jsonl.zstd')).length },
+                  });
+                } catch (e: any) {
+                  return okCarrier({ configured: false, source: 'none', bucket: '', prefix: '', lastManifest: null, eligible: { md: 0, sessions: 0 }, error: e?.message ?? String(e) });
+                }
+              }
+              case 'backupPreview': {
+                const r = await (await makeBackupService()).preview();
+                return okCarrier({ previewId: r.previewId, revision: r.revision, expiresAt: r.expiresAt, summary: r.summary });
+              }
+              case 'backupApply': {
+                const { previewId, confirm } = (args ?? {}) as any;
+                if (confirm !== true) return failCarrier('backup apply requires confirm:true', 'maestro-sync/confirm');
+                const r = await (await makeBackupService()).apply({ previewId, confirm: true });
+                return r.ok ? okCarrier({ ok: true, committed: r.committed, failures: r.failures }) : failCarrier('backup apply failed', 'maestro-sync/backup', { failures: r.failures } as any);
+              }
+              case 'restorePreview': {
+                const mode = (args as any)?.mode === 'new-dir' ? 'new-dir' : 'in-place';
+                const r = await (await makeBackupService()).restorePreview({ mode });
+                return okCarrier(r);
+              }
+              case 'restoreApply': {
+                const { previewId, mode, destDir, confirm } = (args ?? {}) as any;
+                if (confirm !== true) return failCarrier('restore apply requires confirm:true', 'maestro-sync/confirm');
+                const r = await (await makeBackupService()).restoreApply({ previewId, mode, destDir, confirm: true });
+                return r.ok ? okCarrier({ ok: true, committed: r.committed, failures: r.failures }) : failCarrier('restore apply failed', 'maestro-sync/restore', { failures: r.failures } as any);
+              }
+              case 'backupGcPreview': {
+                const r = await (await makeBackupService()).gcPreview({});
+                return okCarrier(r);
+              }
+              case 'backupGcApply': {
+                const { previewId, confirm } = (args ?? {}) as any;
+                if (confirm !== true) return failCarrier('gc apply requires confirm:true', 'maestro-sync/confirm');
+                const r = await (await makeBackupService()).gcApply({ previewId, confirm: true });
+                return okCarrier(r);
               }
               default:
                 return failCarrier('unknown method: ' + String(method));
