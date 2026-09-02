@@ -19,6 +19,8 @@ import * as os from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SyncTransport } from '../../src/host/transport.js';
 import type { RemoteTarget } from '../../src/host/sync-types.js';
+import type { RemoteManifestEntry } from '../../src/host/remote-manifest.js';
+import { normalizeEligiblePath } from '../../src/host/validation.js';
 
 export interface FakeRemoteResult {
   transport: SyncTransport;
@@ -85,6 +87,18 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
           onFile?.(entry);
         }
         return out;
+      },
+      manifest: async (): Promise<RemoteManifestEntry[]> => {
+        const out: RemoteManifestEntry[] = [];
+        for (const [rel, buf] of remote) {
+          try {
+            normalizeEligiblePath(rel);
+          } catch {
+            continue;
+          }
+          out.push({ path: rel, sha256: sha256(buf), size: buf.length, mtimeSec: 0 });
+        }
+        return out.sort((a, b) => a.path.localeCompare(b.path));
       },
       upload: async (target: RemoteTarget, source: string, paths: readonly string[], operationId: string) => {
         if (result.failUploadAfter !== undefined && result.calls.upload.length >= result.failUploadAfter) {

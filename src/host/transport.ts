@@ -5,6 +5,7 @@ import type { RemoteTarget, SyncFailure, SyncPhase } from './sync-types.js';
 import type { ProcessRunner, ProcessResult } from './process-runner.js';
 import { validateRemoteTarget } from './validation.js';
 import { REMOTE_AGENT_REL, remoteAgentSource, verifyRemoteAgentSource } from './remote-agent.js';
+import { buildRemoteManifestScript, parseRemoteManifest, type RemoteManifestEntry } from './remote-manifest.js';
 
 export interface SyncTransport {
   /** Resolve the remote user's $HOME as raw bytes (preflight, never shell ~ expansion). */
@@ -26,6 +27,12 @@ export interface SyncTransport {
    * preview to count session changes without rsync staging remote bytes.
    */
   hashes(target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void): Promise<{ path: string; sha256: string; size: number }[]>;
+  /**
+   * One-pass remote inventory: a single ssh runs the fixed NUL-framed manifest
+   * script and returns validated eligible entries (path/sha256/size/mtimeSec)
+   * — replaces find + rsync -rcn compare + session hashes for inventory.
+   */
+  manifest(target: RemoteTarget): Promise<RemoteManifestEntry[]>;
   /** Upload materialized bytes for one operation into the remote private stage dir. */
   upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void>;
   /** Install the fixed remote CAS helper under `<root>/.maestro-sync/bin`. */
@@ -156,6 +163,19 @@ export class SshRsyncTransport implements SyncTransport {
       throw Object.assign(new Error(`hashes failed: ${result.stderr.toString()}`), failure('snapshot', 'HASH_FAILED', result.stderr.toString()));
     }
     return out;
+  }
+
+  async manifest(target: RemoteTarget): Promise<RemoteManifestEntry[]> {
+    const validated = validateRemoteTarget(target);
+    // One ssh runs the fixed NUL-framed manifest script (find + sha256sum +
+    // stat in a single pass); every returned path is validated by the parser
+    // before it can enter a plan. This replaces list + compare + hashes for
+    // inventory: one remote byte pass, one spawn.
+    const result = await this.runner.run('ssh', [validated.host, buildRemoteManifestScript(validated.dshRoot)], { timeoutMs: 300000 });
+    if (result.exitCode !== 0) {
+      throw Object.assign(new Error(`manifest failed: ${result.stderr.toString()}`), failure('snapshot', 'MANIFEST_FAILED', result.stderr.toString()));
+    }
+    return parseRemoteManifest(result.stdout);
   }
 
   async upload(target: RemoteTarget, source: string, paths: readonly string[], operationId: string): Promise<void> {
