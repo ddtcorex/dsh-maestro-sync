@@ -270,4 +270,102 @@ export class BackupService {
     } catch {}
     return { ok: failures.length === 0, revision: saved.revision, committed, failures };
   }
+
+  // ---- restore (spec §5.6): preview read-only; apply is the only mutation ----
+
+  async restorePreview(opts: { mode: 'new-dir' | 'in-place' }): Promise<{ previewId: string; expiresAt: string; mode: 'new-dir' | 'in-place'; summary: { copied: number; merged: number; skipped: number; conflicts: number } }> {
+    const head = await this.readHeadManifest();
+    if (!head) throw Object.assign(new Error('no backup to restore (no HEAD)'), { phase: 'restore', code: 'NO_BACKUP' });
+    const fsMod = this.opts.fs ?? nodeFs;
+    let copied = 0;
+    let merged = 0;
+    let skipped = 0;
+    let conflicts = 0;
+    for (const f of head.manifest.files) {
+      if (opts.mode === 'new-dir') {
+        copied++;
+        continue;
+      }
+      const full = path.join(this.opts.localDsh, f.path);
+      let cur: string | null = null;
+      try {
+        cur = createHash('sha256').update(fsMod.readFileSync(full)).digest('hex');
+      } catch {}
+      if (cur === f.sha256) skipped++;
+      else if (cur === null) copied++;
+      else merged++;
+    }
+    const previewId = randomBytes(16).toString('hex');
+    const preview = { previewId, expiresAt: new Date(Date.now() + TTL_MS).toISOString(), mode: opts.mode, summary: { copied, merged, skipped, conflicts } };
+    nodeFs.writeFileSync(path.join(this.opts.previewDir, `${previewId}.restore.json`), JSON.stringify(preview), 'utf-8');
+    return preview;
+  }
+
+  async restoreApply(req: { previewId: string; mode: 'new-dir' | 'in-place'; destDir?: string; confirm: true }): Promise<BackupApplyResult> {
+    if (req.confirm !== true) throw Object.assign(new Error('restore apply requires confirm:true'), { phase: 'validate', code: 'CONFIRM_REQUIRED' });
+    const pvPath = path.join(this.opts.previewDir, `${req.previewId}.restore.json`);
+    let saved: { mode: 'new-dir' | 'in-place' };
+    try {
+      saved = JSON.parse(nodeFs.readFileSync(pvPath, 'utf-8')) as { mode: 'new-dir' | 'in-place' };
+    } catch {
+      throw Object.assign(new Error('restore preview not found or expired'), { phase: 'validate', code: 'STALE_PREVIEW' });
+    }
+    if (saved.mode !== req.mode) throw Object.assign(new Error('restore preview mode mismatch'), { phase: 'validate', code: 'DIRECTION_MISMATCH' });
+    const head = await this.readHeadManifest();
+    if (!head) throw Object.assign(new Error('no backup to restore (no HEAD)'), { phase: 'restore', code: 'NO_BACKUP' });
+    const fsMod = this.opts.fs ?? nodeFs;
+    const tmp = path.join(require('node:os').tmpdir(), `restore-${randomBytes(4).toString('hex')}`);
+    nodeFs.mkdirSync(tmp, { recursive: true });
+    const failures: SyncFailureLike[] = [];
+    const committed: string[] = [];
+    try {
+      for (const f of head.manifest.files) {
+        try {
+          const destBase = req.mode === 'new-dir' ? req.destDir ?? path.join(this.opts.localDsh, 'restored') : this.opts.localDsh;
+          const outFull = path.join(destBase, f.path);
+          if (req.mode === 'in-place') {
+            try {
+              const cur = createHash('sha256').update(fsMod.readFileSync(outFull)).digest('hex');
+              if (cur === f.sha256) continue; // byte-identical: skip
+            } catch {}
+          }
+          const fullKey = `${this.opts.target.prefix}${f.blobKey}`;
+          await this.opts.store.get(this.opts.target.bucket, fullKey, tmp);
+          const staged = path.join(tmp, fullKey);
+          const buf = fsMod.readFileSync(staged);
+          if (createHash('sha256').update(buf).digest('hex') !== f.sha256) {
+            throw Object.assign(new Error('blob checksum mismatch'), { phase: 'restore', code: 'CHECKSUM_MISMATCH' });
+          }
+          // In-place: keep a timestamped backup of the target before overwrite.
+          if (req.mode === 'in-place' && fsMod.existsSync(outFull)) {
+            const bak = `${outFull}.bak.${Date.now()}.${randomBytes(4).toString('hex')}`;
+            fsMod.writeFileSync(bak, fsMod.readFileSync(outFull));
+          }
+          fsMod.mkdirSync(path.dirname(outFull), { recursive: true });
+          const tmpFile = `${outFull}.tmp.${randomBytes(4).toString('hex')}`;
+          fsMod.writeFileSync(tmpFile, buf);
+          try {
+            const fd = fsMod.openSync(tmpFile, 'r');
+            try {
+              fsMod.fsyncSync(fd);
+            } finally {
+              fsMod.closeSync(fd);
+            }
+          } catch {}
+          fsMod.renameSync(tmpFile, outFull);
+          committed.push(f.path);
+        } catch (e: any) {
+          failures.push({ phase: 'restore', code: e?.code ?? 'RESTORE_FAILED', detail: e?.message ?? String(e), path: f.path });
+        }
+      }
+    } finally {
+      try {
+        nodeFs.rmSync(tmp, { recursive: true, force: true });
+      } catch {}
+    }
+    try {
+      nodeFs.rmSync(pvPath, { force: true });
+    } catch {}
+    return { ok: failures.length === 0, revision: '', committed, failures };
+  }
 }
