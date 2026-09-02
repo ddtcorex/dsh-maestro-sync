@@ -63,7 +63,7 @@ export class S3ObjectStore {
         signal: controller.signal,
       });
       if (res.status === 412) {
-        throw Object.assign(new Error(`CONCURRENT_MODIFICATION: ${key}`), { phase: 'backup', code: 'CONCURRENT_MODIFICATION', detail: key });
+        return { status: 412, headers: {}, body: Buffer.alloc(0) };
       }
       if (res.status === 404 && method !== 'DELETE') {
         return { status: 404, headers: {}, body: Buffer.alloc(0) };
@@ -108,5 +108,35 @@ export class S3ObjectStore {
     fsMod.mkdirSync(path.dirname(full), { recursive: true });
     fsMod.writeFileSync(full, r.body);
     return { size: r.body.length, etag: (r.headers['etag'] ?? '""').replace(/"/g, '') };
+  }
+
+  /**
+   * If-None-Match:* put — idempotent blob semantics: a 412 (already present)
+   * is a silent no-op because blobs are content-addressed (same key ⇒ same
+   * bytes), so a retry never corrupts.
+   */
+  async putIfAbsent(bucket: string, key: string, body: Buffer): Promise<void> {
+    const r = await this.request('PUT', bucket, key, { body, ifNoneMatch: true });
+    if (r.status === 412) return;
+  }
+
+  /** CAS put: If-Match (or If-None-Match when the object must be absent); a 412 ⇒ CONCURRENT_MODIFICATION. */
+  async putConditional(bucket: string, key: string, body: Buffer, opts: { ifMatch?: string; ifNoneMatch?: boolean } = {}): Promise<void> {
+    const r = await this.request('PUT', bucket, key, { body, etag: opts.ifMatch, ifNoneMatch: opts.ifNoneMatch });
+    if (r.status === 412) {
+      throw Object.assign(new Error(`CONCURRENT_MODIFICATION: ${key}`), { phase: 'backup', code: 'CONCURRENT_MODIFICATION', detail: key });
+    }
+  }
+
+  /** Batched DeleteObjects (≤1000 keys per request). */
+  async deleteKeys(bucket: string, keys: string[]): Promise<void> {
+    for (let i = 0; i < keys.length; i += 1000) {
+      const batch = keys.slice(i, i + 1000);
+      const xml = `<?xml version="1.0"?><Delete>${batch
+        .map((k) => `<Object><Key>${k.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</Key></Object>`)
+        .join('')}<Quiet>false</Quiet></Delete>`;
+      const r = await this.request('POST', bucket, '', { query: 'delete', body: Buffer.from(xml) });
+      if (r.status !== 200) throw Object.assign(new Error(`DeleteObjects failed: ${r.status}`), { phase: 'gc', code: 'S3_ERROR' });
+    }
   }
 }
