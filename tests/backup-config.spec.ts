@@ -28,7 +28,9 @@ describe('backup config', () => {
       // sidecar path override: write a temp file and pass its dir
       (() => {
         const tmp = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'bkcfg-'));
-        require('node:fs').writeFileSync(require('node:path').join(tmp, 'dsh-maestro-sync', 'backup-secrets.json'), JSON.stringify({ accessKeyId: 'file-ak', secretAccessKey: 'file-sk' }), 'utf-8');
+        const dir = require('node:path').join(tmp, 'dsh-maestro-sync');
+        require('node:fs').mkdirSync(dir, { recursive: true });
+        require('node:fs').writeFileSync(require('node:path').join(dir, 'backup-secrets.json'), JSON.stringify({ accessKeyId: 'file-ak', secretAccessKey: 'file-sk' }), 'utf-8');
         return tmp;
       })(),
     );
