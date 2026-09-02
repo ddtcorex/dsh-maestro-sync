@@ -44,6 +44,15 @@ profile) when you want it.
   `memories/SUGGESTIONS.jsonl`, `sessions/<hash>/<id>/session.jsonl.zstd`.
   Settings, profiles, tunnel artifacts, secret material, logs, caches, supervisor
   state are never read, hashed or copied.
+- **Backup/restore/GC are the same preview→confirm contract** (spec
+  2026-09-02-dsh-maestro-sync-speed-backup-design.md): backup preview is
+  read-only (compare against the bucket HEAD manifest), apply is the only
+  upload route (blobs → immutable manifest → CAS `HEAD`; `ok` only after HEAD
+  advances), restore (new-dir or in-place with `.bak` + `fsync`/`rename`) and
+  GC (retain 30 daily + 12 monthly, delete only unreachable blobs) are
+  confirmation-first and single-use. Secret material comes from env or a
+  private `0600` sidecar and is never persisted in settings or returned by
+  RPC/tools.
 
 ## Layout
 
@@ -53,6 +62,9 @@ profile) when you want it.
 - `src/host/sync-service.ts` — the service: snapshot, plan, apply, status pages.
 - `src/host/transport.ts` — argv-only ssh/rsync transport; `compare`/`stage`/`upload`/`ensureAgent`/`commit`.
 - `src/host/remote-agent.ts` — the fixed remote CAS helper source (POSIX sh).
+- `src/host/sigv4.ts`, `s3-object-store.ts`, `backup-config.ts`,
+  `backup-service.ts` — R2/S3 backup engine (zero-dep SigV4 + fetch), restore
+  and retention GC; hermetic fake used in tests (`tests/helpers/fake-s3.ts`).
 - `src/host/sync-plan.ts`, `validation.ts`, `snapshot.ts`, `merge.ts`,
   `session-plan.ts`, `session-merge.ts`, `process-runner.ts`, `config.ts`, `sync-types.ts`.
 - `src/client/index.tsx` — Settings section (confirmation-first Preview/Apply UI).

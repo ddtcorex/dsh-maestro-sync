@@ -62,6 +62,33 @@ Excluded (never read, hashed or copied): settings, tunnel profiles, secret
 material, profiles, supervisor state, storages, tools, skills, logs, caches and
 `*.bak.*`.
 
+## R2 Sync — offsite backup (Cloudflare R2; AWS S3 via the same client, UI hidden)
+
+Backup and restore of the eligible data (memories + session logs) to an
+S3-compatible bucket through a dependency-free SigV4 client.
+
+- **Config** (`~/.dsh/maestro/settings.json` → `domains.sync.r2`): `accountId`,
+  `bucket` (default `maestro-backup`), `prefix`, `region`; optional
+  `provider: "aws"` with a real region works through the same client (UI
+  hidden in phase 1).
+- **Secret material**: environment (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`,
+  AWS `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) or a private `0600` sidecar
+  file in the plugin's own runtime dir — never in settings, never logged,
+  never returned by RPC/tools (status shows only `Env | Private file | Not
+  configured` and the bucket/prefix).
+- **Preview Backup** is read-only: it compares current eligible hashes against
+  the last manifest in the bucket (no object transfer). **Apply** is the only
+  upload route: it PUTs missing blobs (content-addressed, idempotent), writes
+  an immutable manifest and CAS-advances the `HEAD` pointer; `ok` is reported
+  only after `HEAD` advances (`CONCURRENT_MODIFICATION` on a race).
+- **Restore**: to a new directory (never touches the live home) or in place
+  (each overwritten target keeps a `.bak.<ts>.<rand>`, `fsync+rename`), both
+  confirmation-first. **GC**: retains the newest 30 daily + 12 monthly
+  manifests and deletes only unreachable blobs, confirmation-first.
+- Live R2 conditional-write behavior is pinned by an operator-consent probe
+  after the phase-3 hermetic fake-S3 gate — no R2 account is needed to build
+  or test this feature.
+
 ## Develop
 
 ```sh
