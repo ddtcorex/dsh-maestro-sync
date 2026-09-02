@@ -7,6 +7,7 @@ import { validateRemoteTarget } from './validation.js';
 import { REMOTE_AGENT_REL, remoteAgentSource, verifyRemoteAgentSource } from './remote-agent.js';
 import { buildRemoteManifestScript, parseRemoteManifest, type RemoteManifestEntry } from './remote-manifest.js';
 import { buildWarmCacheScript } from './remote-cache.js';
+import { openSshMux, type SshMux } from './ssh-mux.js';
 
 export interface SyncTransport {
   /** Resolve the remote user's $HOME as raw bytes (preflight, never shell ~ expansion). */
@@ -43,14 +44,29 @@ function toFailure(phase: SyncPhase, result: ProcessResult, file: string): SyncF
 }
 
 export class SshRsyncTransport implements SyncTransport {
+  private mux: SshMux | null = null;
+
   constructor(private readonly runner: ProcessRunner) {}
+
+  /** Attach an SSH ControlMaster for this operation (preview/apply wrapper). */
+  setMux(mux: SshMux | null): void {
+    this.mux = mux;
+  }
+
+  private sshArgs(host: string): string[] {
+    return this.mux ? [...this.mux.sshArgs, host] : [host];
+  }
+
+  private rsyncSSHArgs(): string[] {
+    return this.mux ? ['-e', this.mux.rsyncRsh] : [];
+  }
 
   async remoteHome(target: { host: string }): Promise<string> {
     if (!target || typeof target.host !== 'string' || target.host.length === 0) {
       throw Object.assign(new Error('remoteHome requires a non-empty host'), failure('validate', 'INVALID_HOST', 'remoteHome requires a non-empty host'));
     }
     // Preflight: `printf %s '$HOME'` over ssh returns the remote home as bytes.
-    const result = await this.runner.run('ssh', [target.host, 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
+    const result = await this.runner.run('ssh', [...this.sshArgs(target.host), 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
     if (result.exitCode !== 0) {
       throw Object.assign(new Error(`remoteHome failed: ${result.stderr.toString()}`), failure('validate', 'REMOTE_HOME_FAILED', result.stderr.toString()));
     }
@@ -70,7 +86,7 @@ export class SshRsyncTransport implements SyncTransport {
       await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
       const result = await this.runner.run(
         'rsync',
-        ['-az', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
+        [...this.rsyncSSHArgs(), '-az', '--files-from=' + listFile, `${validated.host}:${validated.dshRoot}/`, destination + '/'],
         // SSH transfers of hundreds of small session files need more than 2 min
         // on real links (3.5s latency × N round-trips); 5 min keeps preview/apply
         // usable while still failing closed when the link is actually down.
@@ -90,7 +106,7 @@ export class SshRsyncTransport implements SyncTransport {
     // stat in a single pass); every returned path is validated by the parser
     // before it can enter a plan. This replaces list + compare + hashes for
     // inventory: one remote byte pass, one spawn.
-    const result = await this.runner.run('ssh', [validated.host, buildRemoteManifestScript(validated.dshRoot)], { timeoutMs: 300000 });
+    const result = await this.runner.run('ssh', [...this.sshArgs(validated.host), buildRemoteManifestScript(validated.dshRoot)], { timeoutMs: 300000 });
     if (result.exitCode !== 0) {
       throw Object.assign(new Error(`manifest failed: ${result.stderr.toString()}`), failure('snapshot', 'MANIFEST_FAILED', result.stderr.toString()));
     }
@@ -102,7 +118,7 @@ export class SshRsyncTransport implements SyncTransport {
     // Refreshes <root>/.maestro-sync/fp.tsv atomically on the remote. Only the
     // push-apply path (post-commit) or an explicit warm command calls this —
     // preview must stay strictly read-only.
-    const result = await this.runner.run('ssh', [validated.host, buildWarmCacheScript(validated.dshRoot)], { timeoutMs: 300000 });
+    const result = await this.runner.run('ssh', [...this.sshArgs(validated.host), buildWarmCacheScript(validated.dshRoot)], { timeoutMs: 300000 });
     if (result.exitCode !== 0) {
       throw Object.assign(new Error(`warmCache failed: ${result.stderr.toString()}`), failure('snapshot', 'WARM_FAILED', result.stderr.toString()));
     }
@@ -112,7 +128,7 @@ export class SshRsyncTransport implements SyncTransport {
     const validated = validateRemoteTarget(target);
     if (paths.length === 0) return;
     const remoteStage = `${validated.dshRoot}/.maestro-sync/stage/${operationId}`;
-    const mkdirResult = await this.runner.run('ssh', [validated.host, 'mkdir', '-p', remoteStage], { timeoutMs: 8000 });
+    const mkdirResult = await this.runner.run('ssh', [...this.sshArgs(validated.host), 'mkdir', '-p', remoteStage], { timeoutMs: 8000 });
     if (mkdirResult.exitCode !== 0) {
       throw Object.assign(new Error(`mkdir failed: ${mkdirResult.stderr.toString()}`), failure('publish', 'UPLOAD_FAILED', mkdirResult.stderr.toString()));
     }
@@ -122,7 +138,7 @@ export class SshRsyncTransport implements SyncTransport {
       await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
       const result = await this.runner.run(
         'rsync',
-        ['-az', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
+        [...this.rsyncSSHArgs(), '-az', '--files-from=' + listFile, source + '/', `${validated.host}:${remoteStage}/`],
         { timeoutMs: 300000 },
       );
       if (result.exitCode !== 0) {
@@ -139,15 +155,15 @@ export class SshRsyncTransport implements SyncTransport {
     const agentDir = `${validated.dshRoot}/.maestro-sync/bin`;
     const source = verifyRemoteAgentSource(remoteAgentSource());
     // mkdir -p the private bin dir, then stream the fixed helper via stdin (argv-only).
-    const mkdirResult = await this.runner.run('ssh', [validated.host, 'mkdir', '-p', agentDir], { timeoutMs: 8000 });
+    const mkdirResult = await this.runner.run('ssh', [...this.sshArgs(validated.host), 'mkdir', '-p', agentDir], { timeoutMs: 8000 });
     if (mkdirResult.exitCode !== 0) {
       throw Object.assign(new Error(`ensureAgent mkdir failed: ${mkdirResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', mkdirResult.stderr.toString()));
     }
-    const installResult = await this.runner.run('ssh', [validated.host, `cat > ${agentPath}`], { input: Buffer.from(source, 'utf-8'), timeoutMs: 8000 });
+    const installResult = await this.runner.run('ssh', [...this.sshArgs(validated.host), `cat > ${agentPath}`], { input: Buffer.from(source, 'utf-8'), timeoutMs: 8000 });
     if (installResult.exitCode !== 0) {
       throw Object.assign(new Error(`ensureAgent install failed: ${installResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', installResult.stderr.toString()));
     }
-    const chmodResult = await this.runner.run('ssh', [validated.host, 'chmod', '700', agentPath], { timeoutMs: 8000 });
+    const chmodResult = await this.runner.run('ssh', [...this.sshArgs(validated.host), 'chmod', '700', agentPath], { timeoutMs: 8000 });
     if (chmodResult.exitCode !== 0) {
       throw Object.assign(new Error(`ensureAgent chmod failed: ${chmodResult.stderr.toString()}`), failure('publish', 'AGENT_INSTALL_FAILED', chmodResult.stderr.toString()));
     }
