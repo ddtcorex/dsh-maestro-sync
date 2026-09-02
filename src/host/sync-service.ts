@@ -23,6 +23,7 @@ import { mergeSessionBuffers } from './session-plan.js';
 import { snapshotFile, kindForPath } from './snapshot.js';
 import { hashFiles } from './hashing.js';
 import { loadIndex, saveIndex, probeIndex, matchesStat, statFingerprint } from './fingerprint.js';
+import type { RemoteManifestEntry } from './remote-manifest.js';
 import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview, storePreview } from './sync-plan.js';
 import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
 import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction, SyncProgress } from './sync-types.js';
@@ -240,40 +241,6 @@ export class SyncService {
           }
         }),
     )].sort();
-  }
-
-  /** Parse transport.list output into eligible relative paths (validated). */
-  private remoteRelativePaths(target: RemoteTarget, raw: Buffer): string[] {
-    const out = new Set<string>();
-    for (const line of raw.toString('utf-8').split('\n')) {
-      const p = line.trim();
-      if (!p) continue;
-      let rel: string | null = null;
-      const prefix = target.dshRoot + '/';
-      if (p.startsWith(prefix)) rel = p.slice(prefix.length);
-      else if (p.startsWith(target.dshRoot)) rel = p.slice(target.dshRoot.length + 1);
-      const idx = p.lastIndexOf('/.dsh/');
-      if (rel === null && idx !== -1) rel = p.slice(idx + 6);
-      if (rel === null && p.startsWith('/')) rel = p.slice(1);
-      if (rel === null || !rel) continue;
-      try {
-        normalizeEligiblePath(rel);
-        out.add(rel);
-      } catch {
-        // skip ineligible
-      }
-    }
-    return [...out].sort();
-  }
-
-  private async readLocalBuffer(rel: string): Promise<Buffer> {
-    const full = path.join(this.localDsh, rel);
-    const fsMod = this.fs;
-    if (typeof fsMod.readFileSync === 'function') {
-      const data = fsMod.readFileSync(full);
-      return Buffer.isBuffer(data) ? Buffer.from(data) : Buffer.from(String(data), 'utf-8');
-    }
-    throw syncFailure('snapshot', 'LOCAL_READ_FAILED', `cannot read local file ${rel}`);
   }
 
   /**
@@ -714,6 +681,57 @@ export class SyncService {
 
   // ---- status ----
 
+  // Manifest memo for STATUS DISPLAY ONLY (30 s TTL). Preview/apply always
+  // fetch a fresh manifest — the memo never influences a plan or a write.
+  private manifestMemo: { at: number; key: string; entries: RemoteManifestEntry[] } | null = null;
+  private async statusManifest(target: RemoteTarget): Promise<RemoteManifestEntry[]> {
+    const key = `${target.host}:${target.dshRoot}`;
+    const now = Date.now();
+    if (this.manifestMemo && this.manifestMemo.key === key && now - this.manifestMemo.at < 30_000) {
+      return this.manifestMemo.entries;
+    }
+    const entries = await this.transport.manifest(target);
+    this.manifestMemo = { at: now, key, entries };
+    return entries;
+  }
+
+  /** Local eligible paths with their sha256 (fingerprint cache fast-path; stale files stream-hashed). */
+  private async localSnapshotsWithHashes(localFiles: string[], onProgress?: (current: number, total: number, file: string) => void): Promise<Map<string, string>> {
+    const fsMod = this.fs;
+    const index = loadIndex(this.cacheDir);
+    const stale: string[] = [];
+    const out = new Map<string, string>();
+    for (const p of localFiles) {
+      const entry = probeIndex(p, index);
+      let st: any = null;
+      try {
+        st = typeof fsMod.statSync === 'function' ? fsMod.statSync(path.join(this.localDsh, p), { bigint: true } as any) : null;
+      } catch {
+        st = null;
+      }
+      if (entry && st && matchesStat(entry, st)) out.set(p, entry.sha256);
+      else stale.push(p);
+    }
+    if (stale.length > 0) {
+      let i = 0;
+      const hashed = await hashFiles(fsMod, this.localDsh, stale, {
+        onFile: (h) => {
+          i++;
+          onProgress?.(i, stale.length, h.path);
+        },
+      });
+      for (const h of hashed) {
+        out.set(h.path, h.sha256);
+        try {
+          const st = typeof fsMod.statSync === 'function' ? fsMod.statSync(path.join(this.localDsh, h.path), { bigint: true } as any) : null;
+          if (st) index.entries[h.path] = { ...statFingerprint(st), sha256: h.sha256 };
+        } catch {}
+      }
+      if (hashed.length > 0) saveIndex(this.cacheDir, index);
+    }
+    return out;
+  }
+
   async status(): Promise<StatusResult> {
     const connection = await this.checkConnection();
     const localFiles = this.listLocalFiles();
@@ -723,7 +741,7 @@ export class SyncService {
     let remoteFiles: string[] = [];
     try {
       const target = await this.requireTarget();
-      remoteFiles = this.remoteRelativePaths(target, await this.transport.list(target));
+      remoteFiles = (await this.statusManifest(target)).map((e) => e.path);
     } catch {
       remoteFiles = [];
     }
@@ -749,43 +767,36 @@ export class SyncService {
    * Buckets are ACTION-based (like preview): `remoteOnly` lists every file a
    * pull would bring in (remote-only paths + both-side content differences),
    * `localOnly` lists what a push would send (local-only paths + content
-   * differences). A live DSH home keeps path lists mostly equal between the
-   * two machines while session content diverges, so path-only buckets would
-   * stay 0/0 and hide the real changes.
+   * differences). One manifest + one local stat/hash pass; no rsync compare.
    */
   async statusPage(opts: { bucket?: string; cursor?: number; limit?: number } = {}): Promise<StatusPage> {
-    const st = await this.status();
     const bucket = opts.bucket === 'remoteOnly' || opts.bucket === 'localOnly' ? opts.bucket : 'localOnly';
     const offset = Math.max(0, Math.trunc(opts.cursor ?? 0));
     const limit = Math.min(500, Math.max(1, Math.trunc(opts.limit ?? 100)));
-
-    // Which remote files differ in content (rsync -rcn: remote-only paths plus
-    // both-side checksum differences) — exactly the pull candidates. Reuses the
-    // remote paths already fetched by status() so this adds one compare pass.
-    let remoteChanged = new Set<string>();
+    const connection = await this.checkConnection();
+    if (!connection.ok) {
+      return { total: 0, offset, limit, files: [], nextCursor: null, connection, remoteHost: this.remote };
+    }
+    let all: string[] = [];
     try {
       const target = await this.requireTarget();
-      const remotePaths = [...st.remoteOnlyFiles, ...st.bothFiles];
-      const compareOut = await this.transport.compare(target, this.localDsh, remotePaths);
-      remoteChanged = new Set(compareOut.toString('utf-8').split('\n').map((s) => s.trim()).filter(Boolean));
+      const remoteEntries = await this.statusManifest(target);
+      const localFiles = this.listLocalFiles();
+      const localSha = await this.localSnapshotsWithHashes(localFiles);
+      if (bucket === 'remoteOnly') {
+        // pull brings: remote-only paths (copy) + both-side content diffs (merge)
+        all = remoteEntries.filter((r) => localSha.get(r.path) === undefined || localSha.get(r.path) !== r.sha256).map((r) => r.path);
+      } else {
+        // push sends: local-only paths (copy) + content diffs on shared paths (merge)
+        const remoteSha = new Map(remoteEntries.map((r) => [r.path, r.sha256]));
+        all = localFiles.filter((p) => remoteSha.get(p) === undefined || remoteSha.get(p) !== localSha.get(p));
+      }
+      all = [...new Set(all)].sort();
     } catch {
-      // offline/compare failure → fall back to path-only buckets (may be empty)
+      all = [];
     }
-
-    let all: string[];
-    if (bucket === 'remoteOnly') {
-      // pull brings: remote-only paths (copy) + both-side content diffs (merge)
-      all = [...st.remoteOnlyFiles];
-      for (const p of st.bothFiles) if (remoteChanged.has(p)) all.push(p);
-    } else {
-      // push sends: local-only paths (copy) + content diffs on shared paths (merge)
-      all = [...st.localOnlyFiles];
-      for (const p of st.bothFiles) if (remoteChanged.has(p)) all.push(p);
-    }
-    all = [...new Set(all)].sort();
-
     const files = all.slice(offset, offset + limit);
     const nextCursor = offset + files.length < all.length ? offset + files.length : null;
-    return { total: all.length, offset, limit, files, nextCursor, connection: st.connection, remoteHost: st.remoteHost };
+    return { total: all.length, offset, limit, files, nextCursor, connection, remoteHost: this.remote };
   }
 }

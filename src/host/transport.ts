@@ -11,23 +11,8 @@ import { buildWarmCacheScript } from './remote-cache.js';
 export interface SyncTransport {
   /** Resolve the remote user's $HOME as raw bytes (preflight, never shell ~ expansion). */
   remoteHome(target: { host: string }): Promise<string>;
-  /** List files under the validated remote DSH root. */
-  list(target: RemoteTarget): Promise<Buffer>;
-  /**
-   * Checksum-compare listed paths between the remote root and `localRoot`
-   * without transferring content (rsync -rcn). Returns the relative names of
-   * files that actually differ (added, content-changed) — the candidates that
-   * later get staged. Bytes are never copied for identical files.
-   */
-  compare(target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer>;
   /** Rsync one batched --files-from stage of validated relative paths into `destination`. */
   stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void>;
-  /**
-   * Checksum + size every remote path without transferring content (one ssh,
-   * streaming one "sha\tsize\tpath" line per file as each completes). Used by
-   * preview to count session changes without rsync staging remote bytes.
-   */
-  hashes(target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void): Promise<{ path: string; sha256: string; size: number }[]>;
   /**
    * One-pass remote inventory: a single ssh runs the fixed NUL-framed manifest
    * script and returns validated eligible entries (path/sha256/size/mtimeSec)
@@ -76,45 +61,6 @@ export class SshRsyncTransport implements SyncTransport {
     return home;
   }
 
-  async list(target: RemoteTarget): Promise<Buffer> {
-    const validated = validateRemoteTarget(target);
-    // dshRoot is strictly validated (absolute, [A-Za-z0-9._-/], no meta), so it is
-    // safe as argv items of the remote `find` command. Only the eligible subtrees
-    // are walked; node_modules/profiles/.supervisor are pruned so a real ~/.dsh
-    // lists in seconds. Discovered file names are never interpolated here — the
-    // manifest is staged via --files-from instead.
-    const remoteCmd =
-      `find ${validated.dshRoot}/memories ${validated.dshRoot}/sessions ` +
-      `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print`;
-    const result = await this.runner.run('ssh', [validated.host, remoteCmd], { timeoutMs: 60000 });
-    if (result.exitCode !== 0) {
-      throw Object.assign(new Error(`list failed: ${result.stderr.toString()}`), failure('snapshot', 'LIST_FAILED', result.stderr.toString()));
-    }
-    return result.stdout;
-  }
-
-  async compare(target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer> {
-    const validated = validateRemoteTarget(target);
-    if (paths.length === 0) return Buffer.alloc(0);
-    const tmp = await mkdtemp(join(tmpdir(), 'maestro-compare-'));
-    try {
-      const listFile = join(tmp, 'files.txt');
-      await writeFile(listFile, paths.join('\n') + '\n', 'utf-8');
-      const result = await this.runner.run(
-        'rsync',
-        ['-rcn', `--out-format=%n`, `--files-from=${listFile}`, `${validated.host}:${validated.dshRoot}/`, localRoot.endsWith('/') ? localRoot : localRoot + '/'],
-        { timeoutMs: 60000 },
-      );
-      // 0 = ok; 23/24 = partial/hidden files (vanished) — stdout still lists the diffs.
-      if (result.exitCode !== 0 && result.exitCode !== 23 && result.exitCode !== 24) {
-        throw Object.assign(new Error(`compare failed: ${result.stderr.toString()}`), failure('snapshot', 'COMPARE_FAILED', result.stderr.toString()));
-      }
-      return result.stdout;
-    } finally {
-      await rm(tmp, { recursive: true, force: true }).catch(() => {});
-    }
-  }
-
   async stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void> {
     const validated = validateRemoteTarget(target);
     if (paths.length === 0) return;
@@ -136,40 +82,6 @@ export class SshRsyncTransport implements SyncTransport {
     } finally {
       await rm(tmp, { recursive: true, force: true }).catch(() => {});
     }
-  }
-
-  async hashes(target: RemoteTarget, paths: readonly string[], onFile?: (h: { path: string; sha256: string; size: number }) => void): Promise<{ path: string; sha256: string; size: number }[]> {
-    const validated = validateRemoteTarget(target);
-    if (paths.length === 0) return [];
-    // One ssh session; relative paths stream over stdin inside `while read`
-    // (quotable, no interpolation into the shell), so every eligible file — no
-    // matter its name — is hashed safely. Each completed file emits exactly one
-    // "sha\tsize\tpath" line, which the runner delivers as a progress tick.
-    const cmd =
-      `cd ${validated.dshRoot} && while IFS= read -r f; do ` +
-      `[ -n "$f" ] || continue; ` +
-      `h=$(sha256sum -- "$f" 2>/dev/null | awk '{print $1}'); ` +
-      `s=$(wc -c < "$f" 2>/dev/null || echo 0); ` +
-      `printf '%s\\t%s\\t%s\\n' "$h" "$s" "$f"; ` +
-      `done`;
-    const out: { path: string; sha256: string; size: number }[] = [];
-    const result = await this.runner.run('ssh', [validated.host, cmd], {
-      input: Buffer.from(paths.join('\n') + '\n', 'utf-8'),
-      timeoutMs: 300000,
-      onLine: (line) => {
-        const [sha256, sizeRaw, ...rest] = line.split('\t');
-        const p = rest.join('\t');
-        const size = Number(sizeRaw);
-        if (!sha256 || !p || !Number.isFinite(size)) return;
-        const entry = { path: p, sha256, size };
-        out.push(entry);
-        onFile?.(entry);
-      },
-    });
-    if (result.exitCode !== 0) {
-      throw Object.assign(new Error(`hashes failed: ${result.stderr.toString()}`), failure('snapshot', 'HASH_FAILED', result.stderr.toString()));
-    }
-    return out;
   }
 
   async manifest(target: RemoteTarget): Promise<RemoteManifestEntry[]> {

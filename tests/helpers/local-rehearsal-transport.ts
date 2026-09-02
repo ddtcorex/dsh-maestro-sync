@@ -29,20 +29,12 @@ export class LocalRehearsalTransport implements SyncTransport {
     return createHash('sha256').update(buf).digest('hex');
   }
 
-  async compare(_target: RemoteTarget, localRoot: string, paths: readonly string[]): Promise<Buffer> {
-    const changed: string[] = [];
-    for (const rel of paths) {
-      const remoteBuf = fs.readFileSync(path.join(this.remoteRoot, rel));
-      const full = path.join(localRoot, rel);
-      let localBuf: Buffer | null = null;
-      if (fs.existsSync(full)) localBuf = fs.readFileSync(full);
-      if (localBuf === null || this.sha256(localBuf) !== this.sha256(remoteBuf)) changed.push(rel);
-    }
-    return Buffer.from(changed.join('\n') + (changed.length ? '\n' : ''), 'utf-8');
+  async hashes(_target: RemoteTarget, paths: readonly string[]): Promise<RemoteManifestEntry[]> {
+    return this.manifest(_target);
   }
 
-  async list(): Promise<Buffer> {
-    const out: string[] = [];
+  async manifest(_target: RemoteTarget): Promise<RemoteManifestEntry[]> {
+    const out: RemoteManifestEntry[] = [];
     const walk = (dir: string, base: string) => {
       for (const name of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, name.name);
@@ -51,36 +43,15 @@ export class LocalRehearsalTransport implements SyncTransport {
           const rel = path.join(base, name.name).split(path.sep).join('/');
           try {
             normalizeEligiblePath(rel);
-            out.push(rel);
           } catch {
-            // excluded — never listed, never read
+            continue;
           }
+          const buf = fs.readFileSync(full);
+          out.push({ path: rel, sha256: this.sha256(buf), size: buf.length, mtimeSec: 0 });
         }
       }
     };
     if (fs.existsSync(this.remoteRoot)) walk(this.remoteRoot, '');
-    const abs = out.sort().map((rel) => `${this.remoteRoot}/${rel}`);
-    return Buffer.from(abs.join('\n') + (abs.length ? '\n' : ''), 'utf-8');
-  }
-
-  async hashes(_target: RemoteTarget, paths: readonly string[]): Promise<RemoteManifestEntry[]> {
-    return this.manifest(_target);
-  }
-
-  async manifest(_target: RemoteTarget): Promise<RemoteManifestEntry[]> {
-    const list = await this.list();
-    const out: RemoteManifestEntry[] = [];
-    for (const line of list.toString('utf-8').split('\n')) {
-      if (!line.trim()) continue;
-      const rel = line.slice(this.remoteRoot.length + 1);
-      try {
-        normalizeEligiblePath(rel);
-      } catch {
-        continue;
-      }
-      const buf = fs.readFileSync(path.join(this.remoteRoot, rel));
-      out.push({ path: rel, sha256: this.sha256(buf), size: buf.length, mtimeSec: 0 });
-    }
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 

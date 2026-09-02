@@ -228,8 +228,8 @@ describe('SyncService', () => {
       expect(remoteAct!.action).toBe('copy');             // remote-only → pull copy
       const newAct = preview.actions.find((a: any) => a.path === 'memories/daily/new.md');
       expect(newAct!.action).toBe('skip');                // local-only under pull → skip
-      // manifest replaced list+compare+hashes: the fake's list/compare were never called
-      expect(fake.calls.list).toBe(0);
+      // manifest is the fake's only remote listing path (list/compare/hashes removed)
+      expect(fake.calls.manifest).toBeGreaterThanOrEqual(1);
       // only the true remote-only file was staged
       const stagedPaths = fake.calls.stage.flatMap((s: any) => s.paths);
       expect(stagedPaths).toContain('memories/daily/remote.md');
