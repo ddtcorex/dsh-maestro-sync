@@ -146,7 +146,7 @@ describe('backup apply', () => {
       // reuse the preview id but against the broken store: apply must not throw, must journal
       const r = await broken.apply({ previewId: p.previewId, confirm: true });
       expect(r.ok).toBe(false);
-      expect(r.failures.some((f: any) => f.code === 'UPLOAD_FAILED' || f.code === 'S3_ERROR')).toBe(true);
+      expect(r.failures.some((f: any) => f.code === 'PREVIEW_REFRESH_FAILED' || f.code === 'UPLOAD_FAILED' || f.code === 'S3_ERROR')).toBe(true);
       expect(r.committed.length).toBe(0);
     } finally {
       fs.rmSync(dsh, { recursive: true, force: true });
