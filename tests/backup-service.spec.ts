@@ -207,4 +207,34 @@ describe('restore', () => {
     }
   });
 });
+
+describe('gc', () => {
+  it('gc preview lists only blobs unreachable from retained manifests; apply deletes them', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-'));
+    try {
+      fs.mkdirSync(path.join(dsh, 'memories'));
+      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'aaa');
+      const store = new S3ObjectStore({ endpoint: h.url, region: 'auto', accessKeyId: 'ak', secretAccessKey: 'sk' });
+      const svc = new BackupService({ localDsh: dsh, store, target: { provider: 'r2', bucket: h.bucket, prefix: 'v1/hosts/t/', hostId: 't' }, previewDir: path.join(dsh, '.pv'), cacheDir: path.join(dsh, '.fp'), fs: fs as any });
+      const p = await svc.preview();
+      await svc.apply({ previewId: p.previewId, confirm: true });
+      // reachable blob key
+      const reachable = 'v1/hosts/t/blobs/sha256/' + require('node:crypto').createHash('sha256').update('aaa').digest('hex');
+      // plant an orphan blob no manifest references
+      const orphan = 'blobs/sha256/' + 'f'.repeat(64);
+      await store.putIfAbsent(h.bucket, 'v1/hosts/t/' + orphan, Buffer.from('orphan'));
+      const report = await svc.gcPreview({ keepDaily: 30, keepMonthly: 12 });
+      expect(report.deletableBlobs).toContain(orphan);
+      expect(report.deletableBlobs).not.toContain(reachable.replace('v1/hosts/t/', ''));
+      const r = await svc.gcApply({ previewId: report.previewId, confirm: true });
+      expect(r.ok).toBe(true);
+      expect(h.objects().has('v1/hosts/t/' + orphan)).toBe(false);
+      expect(h.objects().has(reachable)).toBe(true);
+    } finally {
+      fs.rmSync(dsh, { recursive: true, force: true });
+    }
+  });
+});
 });
