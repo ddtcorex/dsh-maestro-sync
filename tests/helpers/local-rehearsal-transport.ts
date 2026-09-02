@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import type { SyncTransport } from '../../src/host/transport.js';
 import type { RemoteTarget } from '../../src/host/sync-types.js';
+import type { RemoteManifestEntry } from '../../src/host/remote-manifest.js';
 import { remoteAgentSource, REMOTE_AGENT_REL } from '../../src/host/remote-agent.js';
 import { normalizeEligiblePath } from '../../src/host/validation.js';
 
@@ -60,6 +61,27 @@ export class LocalRehearsalTransport implements SyncTransport {
     if (fs.existsSync(this.remoteRoot)) walk(this.remoteRoot, '');
     const abs = out.sort().map((rel) => `${this.remoteRoot}/${rel}`);
     return Buffer.from(abs.join('\n') + (abs.length ? '\n' : ''), 'utf-8');
+  }
+
+  async hashes(_target: RemoteTarget, paths: readonly string[]): Promise<RemoteManifestEntry[]> {
+    return this.manifest(_target);
+  }
+
+  async manifest(_target: RemoteTarget): Promise<RemoteManifestEntry[]> {
+    const list = await this.list();
+    const out: RemoteManifestEntry[] = [];
+    for (const line of list.toString('utf-8').split('\n')) {
+      if (!line.trim()) continue;
+      const rel = line.slice(this.remoteRoot.length + 1);
+      try {
+        normalizeEligiblePath(rel);
+      } catch {
+        continue;
+      }
+      const buf = fs.readFileSync(path.join(this.remoteRoot, rel));
+      out.push({ path: rel, sha256: this.sha256(buf), size: buf.length, mtimeSec: 0 });
+    }
+    return out.sort((a, b) => a.path.localeCompare(b.path));
   }
 
   async stage(_target: RemoteTarget, paths: readonly string[], destination: string): Promise<void> {
