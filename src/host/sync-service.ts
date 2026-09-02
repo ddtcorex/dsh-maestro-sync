@@ -256,7 +256,7 @@ export class SyncService {
    * re-hashed at write time (see apply), so a stale cache can never publish a
    * wrong mutation target.
    */
-  private async snapshotBoth(opts: { sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void } = {}): Promise<{
+  private async snapshotBoth(opts: { sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean } = {}): Promise<{
     target: RemoteTarget;
     localSnapshots: FileSnapshot[];
     remoteSnapshots: FileSnapshot[];
@@ -265,11 +265,16 @@ export class SyncService {
     cleanup: () => void;
   }> {
     const progress = (phase: SyncProgress['phase'], current: number, total: number, file?: string) => opts.onProgress?.({ phase, current, total, file });
+    const stop = () => {
+      if (opts.shouldStop?.()) throw syncFailure('snapshot', 'CANCELLED', 'preview cancelled');
+    };
     const isSession = (p: string) => p.endsWith('.jsonl.zstd');
     const fsMod = this.fs;
     const target = await this.requireTarget();
+    stop();
     const localPaths = this.listLocalFiles();
     const remoteManifest = await this.transport.manifest(target);
+    stop();
     const remoteSnapshots = remoteManifest.map((e) => ({ path: e.path, sha256: e.sha256, size: e.size, kind: kindForPath(e.path) }));
     const remoteSet = new Set(remoteManifest.map((e) => e.path));
 
@@ -296,6 +301,7 @@ export class SyncService {
       onFile: (h) => {
         hashedCount++;
         progress('hashing', hashedCount, stale.length, h.path);
+        stop();
       },
     });
     for (const h of staleHashes) {
@@ -368,10 +374,12 @@ export class SyncService {
     const stageSessions = opts.sessionsCountOnly ? [] : sessionChanged.filter((p) => remoteSet.has(p));
 
     if (stageChanged.length > 0) {
+      stop();
       ensureStaging();
       progress('staging', 0, stageChanged.length);
       try {
         await this.transport.stage(target, stageChanged, stagingDir!);
+        stop();
       } catch (e: any) {
         throw syncFailure('snapshot', 'STAGE_FAILED', `remote staging failed: ${e?.message ?? String(e)}`);
       }
@@ -385,6 +393,7 @@ export class SyncService {
     }
     if (stageSessions.length > 0) {
       // Apply (non count-only) needs real session bytes for merges and copies.
+      stop();
       ensureStaging();
       try {
         await this.transport.stage(target, stageSessions, stagingDir!);
@@ -408,12 +417,13 @@ export class SyncService {
    * `onProgress` receives per-phase ticks (hashing emits one per session file).
    * No preview path may copy, backup, restore or publish.
    */
-  async preview(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void }): Promise<PreviewResult> {
+  async preview(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
     const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
     const connection = await this.requireConnection();
     const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth({
       sessionsCountOnly: opts.sessionsCountOnly,
       onProgress: opts.onProgress,
+      shouldStop: opts.shouldStop,
     });
     try {
       opts.onProgress?.({ phase: 'planning', current: 0, total: 1 });
