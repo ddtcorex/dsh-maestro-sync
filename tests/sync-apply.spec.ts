@@ -231,6 +231,50 @@ describe('apply', () => {
     }
   });
 
+  it('apply never re-reads an unchanged file: content is loaded lazily only for plan targets', async () => {
+    const { localRoot, cleanup } = makeTempRoots('apply-lazy-');
+    try {
+      fs.mkdirSync(path.join(localRoot, 'memories'));
+      const shared = Buffer.from('identical-bytes');
+      fs.writeFileSync(path.join(localRoot, 'memories/shared.md'), shared);
+      fs.writeFileSync(path.join(localRoot, 'memories/pullme.md'), 'keep');
+      const fake = createFakeRemote(new Map([
+        ['memories/shared.md', shared],
+        ['memories/pullme.md', Buffer.from('remote-new')],
+      ]));
+      let sharedReads = 0;
+      const fsProbe: any = new Proxy(fs, {
+        get(t, prop) {
+          if (prop === 'readFileSync') {
+            return (p: any) => {
+              if (String(p).includes('shared.md')) sharedReads++;
+              return t.readFileSync(p);
+            };
+          }
+          return (t as any)[prop];
+        },
+      });
+      const svc = new SyncService({
+        localDsh: localRoot,
+        remote: 'sync-host',
+        remoteDsh: '/home/kai/.dsh',
+        fs: fsProbe,
+        runner: stubRunner as any,
+        transport: fake.transport as any,
+        cacheDir: path.join(localRoot, '.fp'),
+      });
+      const preview = await svc.preview({ direction: 'pull' }); // warms the fingerprint cache (1 read)
+      const readsAfterPreview = sharedReads;
+      const applied = await svc.apply({ previewId: preview.previewId, direction: 'pull', confirm: true });
+      expect(applied.ok).toBe(true);
+      expect(applied.committed).toContain('memories/pullme.md');
+      // shared.md is byte-identical → skip → its content is never re-read on apply
+      expect(sharedReads).toBe(readsAfterPreview);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('push apply refreshes the remote fingerprint cache after a successful commit; preview never warms', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-warm-');
     try {
