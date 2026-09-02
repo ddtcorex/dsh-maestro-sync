@@ -59,7 +59,9 @@ export class S3ObjectStore {
       const res = await this.f(url, {
         method,
         headers: { ...headers, Authorization: signed.authorization, 'X-Amz-Date': signed.amzDate, 'X-Amz-Content-Sha256': signed.xAmzContentSha256 },
-        body: opts.body,
+        // Buffer satisfies BodyInit at runtime (undici accepts it); the TS overloads
+        // only admit Blob/string/URLSearchParams/ArrayBuffer — cast is intentional.
+        body: (opts.body as unknown as BodyInit) ?? undefined,
         signal: controller.signal,
       });
       if (res.status === 412) {
