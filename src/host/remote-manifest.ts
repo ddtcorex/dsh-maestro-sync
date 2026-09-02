@@ -18,38 +18,34 @@ export interface RemoteManifestEntry {
 
 export function buildRemoteManifestScript(dshRoot: string): string {
   // Fixed script; dshRoot is the validated absolute root (same trust rule as transport.list).
-  // Cache-aware, READ-ONLY: it consults <root>/.maestro-sync/fp.tsv and reuses a
-  // cached sha256 when the file's ino+size+mtimeNs+ctimeNs triple (GNU stat
-  // '%.Y'/'%.Z' ns fractions) still matches, skipping sha256sum for unchanged
-  // files. It NEVER writes — the cache is refreshed only by the warm script
-  // (push-apply / explicit warm command), so preview stays strictly read-only.
+  // Cache-aware, READ-ONLY (spec §4.7 clarification, decision C): it consults
+  // <root>/.maestro-sync/fp.tsv and reuses a cached sha256 when the file's
+  // ino+size+mtimeNs+ctimeNs triple (GNU stat '%.Y'/'%.Z' ns fractions) still
+  // matches, skipping sha256sum for unchanged files. The cache is loaded ONCE
+  // in a single awk pass, read straight from the file inside awk (getline — a
+  // `-v cache=...` copy exceeds the 128 KiB per-arg limit once fp.tsv grows,
+  // E2BIG "Argument list too long", measured 2026-09-02); only MISS records are
+  // sha256sum'd in the bash loop. NEVER writes.
   // Every loop-body statement must end with ';' — space-separated assignments
-  // inside a `do...done` one-liner break bash's parser ("unexpected end of file
-  // from while"), verified 2026-09-02 (commit f4b5892).
+  // inside a `do...done` one-liner break bash's parser (verified 2026-09-02).
   const cache = remoteCachePath(dshRoot);
-  const body = [
-    `st=\${rec%%$'\\t'*}; abs=\${rec#*$'\\t'}; rel=\${abs#${dshRoot}/};`,
-    `hit="";`,
-    `[ "$LOOKUP" = "1" ] && hit=$(printf '%s\\n' "$cache"`,
-    `| awk -F '\\t' -v r="$rel" -v s="$st" '$1==r && ($2" "$3" "$4" "$5)==s { print $6"\\t"$3"\\t"$4 }'`,
-    `| head -n 1);`,
-    `if [ -n "$hit" ]; then`,
-    `sha=\${hit%%$'\\t'*}; size=\${hit#*$'\\t'}; size=\${size%%$'\\t'*}; mtime=\${hit##*$'\\t'};`,
-    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$size" "$mtime" "$rel";`,
-    `else`,
-    `sha=$(sha256sum -- "${dshRoot}/$rel" 2>/dev/null | awk '{print $1}');`,
-    `set -- $st;`,
-    `mtime="$3";`,
-    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$2" "$mtime" "$rel";`,
-    `fi;`,
-  ].join(' ');
   return [
-    `LOOKUP=0; [ -s "${cache}" ] && LOOKUP=1;`,
-    `cache="$(cat ${cache} 2>/dev/null || true)";`,
     `find ${dshRoot}/memories ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
-    `| xargs -0 stat --printf='%i %s %.Y %.Z\\t%n\\0' 2>/dev/null`,
-    `| while IFS= read -r -d '' rec; do ${body} done`,
+    `| xargs -0 stat --printf='%i %s %.Y %.Z\\t%n\\n' 2>/dev/null`,
+    `| awk -F '\\t' -v root='${dshRoot}/' -v cachefile='${cache}' 'BEGIN{while((getline line < cachefile) > 0){if(line=="")continue; m=split(line,a,"\\t"); if(m>=6){c[a[1]]=(a[2]" "a[3]" "a[4]" "a[5])"\\t"a[6]"\\t"a[3]"\\t"a[4];}} close(cachefile);} {st=$1; rel=$2; sub(root,"",rel); if(rel in c){split(c[rel],e,"\\t"); if(e[1]==st){print "H\\t"rel"\\t"e[2]"\\t"e[3]"\\t"e[4]; next;}} print "M\\t"rel"\\t"st;}'`,
+    `| while IFS= read -r rec; do`,
+    `tag=\${rec%%$'\\t'*}; rest=\${rec#*$'\\t'};`,
+    `if [ "$tag" = "H" ]; then`,
+    `rel=\${rest%%$'\\t'*}; rest=\${rest#*$'\\t'}; sha=\${rest%%$'\\t'*}; rest=\${rest#*$'\\t'}; size=\${rest%%$'\\t'*}; mtime=\${rest#*$'\\t'};`,
+    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$size" "$mtime" "$rel";`,
+    `else`,
+    `rel=\${rest%%$'\\t'*}; st=\${rest#*$'\\t'};`,
+    `sha=$(sha256sum -- "${dshRoot}/$rel" 2>/dev/null | awk '{print $1}');`,
+    `set -- $st;`,
+    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$2" "$3" "$rel";`,
+    `fi;`,
+    `done`,
   ].join(' ');
 }
 
