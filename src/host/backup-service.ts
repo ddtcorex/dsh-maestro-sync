@@ -368,4 +368,86 @@ export class BackupService {
     } catch {}
     return { ok: failures.length === 0, revision: '', committed, failures };
   }
+
+  // ---- retention GC (spec §5.7): preview read-only; apply deletes unreachable blobs ----
+
+  async gcPreview(opts: { keepDaily?: number; keepMonthly?: number } = {}): Promise<{
+    retainedManifests: number;
+    trashManifests: number;
+    deletableBlobs: string[];
+    freedBytes: number;
+    previewId: string;
+  }> {
+    const prefix = this.opts.target.prefix;
+    const all = (await this.opts.store.list(this.opts.target.bucket, `${prefix}manifests/`)).map((e) => e.key);
+    const byDay = new Map<string, string>();
+    const byMonth = new Map<string, string>();
+    for (const key of all) {
+      const head = await this.readManifestKey(key);
+      const d = head.createdAt;
+      const day = d.slice(0, 10);
+      const month = d.slice(0, 7);
+      const curDay = byDay.get(day);
+      if (!curDay || key > curDay) byDay.set(day, key);
+      const curMonth = byMonth.get(month);
+      if (!curMonth || key > curMonth) byMonth.set(month, key);
+    }
+    const keepDaily = opts.keepDaily ?? 30;
+    const keepMonthly = opts.keepMonthly ?? 12;
+    const days = [...byDay.keys()].sort().slice(-keepDaily);
+    const months = [...byMonth.keys()].sort().slice(-keepMonthly);
+    const retained = new Set<string>();
+    for (const d of days) retained.add(byDay.get(d)!);
+    for (const m of months) retained.add(byMonth.get(m)!);
+
+    const reachable = new Set<string>();
+    for (const key of retained) {
+      const m = await this.readManifestKey(key);
+      for (const f of m.files) reachable.add(this.blobKey(f.sha256));
+    }
+    const allBlobs = (await this.opts.store.list(this.opts.target.bucket, `${prefix}blobs/`)).map((e) => e.key.replace(prefix, ''));
+    const deletable = allBlobs.filter((k) => !reachable.has(k));
+    let freedBytes = 0;
+    for (const k of deletable) {
+      const head = await this.opts.store.head(this.opts.target.bucket, `${prefix}${k}`);
+      freedBytes += head?.size ?? 0;
+    }
+    const previewId = randomBytes(16).toString('hex');
+    nodeFs.writeFileSync(
+      path.join(this.opts.previewDir, `${previewId}.gc.json`),
+      JSON.stringify({ previewId, deletable, freedBytes, ts: Date.now() }),
+      'utf-8',
+    );
+    return { retainedManifests: retained.size, trashManifests: all.length - retained.size, deletableBlobs: deletable, freedBytes, previewId };
+  }
+
+  async gcApply(req: { previewId: string; confirm: true }): Promise<{ ok: boolean; deleted: number; freedBytes: number }> {
+    if (req.confirm !== true) throw Object.assign(new Error('gc apply requires confirm:true'), { phase: 'validate', code: 'CONFIRM_REQUIRED' });
+    const pvPath = path.join(this.opts.previewDir, `${req.previewId}.gc.json`);
+    let saved: { deletable: string[]; freedBytes: number };
+    try {
+      saved = JSON.parse(nodeFs.readFileSync(pvPath, 'utf-8')) as { deletable: string[]; freedBytes: number };
+    } catch {
+      throw Object.assign(new Error('gc preview not found or expired'), { phase: 'validate', code: 'STALE_PREVIEW' });
+    }
+    const prefix = this.opts.target.prefix;
+    await this.opts.store.deleteKeys(this.opts.target.bucket, saved.deletable.map((k) => `${prefix}${k}`));
+    try {
+      nodeFs.rmSync(pvPath, { force: true });
+    } catch {}
+    return { ok: true, deleted: saved.deletable.length, freedBytes: saved.freedBytes };
+  }
+
+  private async readManifestKey(key: string): Promise<BackupManifest> {
+    const tmp = path.join(require('node:os').tmpdir(), `bk-mf-${randomBytes(4).toString('hex')}`);
+    nodeFs.mkdirSync(tmp, { recursive: true });
+    try {
+      await this.opts.store.get(this.opts.target.bucket, key, tmp);
+      return JSON.parse(nodeFs.readFileSync(path.join(tmp, key), 'utf-8')) as BackupManifest;
+    } finally {
+      try {
+        nodeFs.rmSync(tmp, { recursive: true, force: true });
+      } catch {}
+    }
+  }
 }
