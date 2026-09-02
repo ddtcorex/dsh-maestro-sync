@@ -426,8 +426,8 @@ export class SyncService {
    * finally.
    */
   private async withMux<T>(run: () => Promise<T>): Promise<T> {
-    const setMux = (this.transport as any).setMux;
-    if (typeof setMux !== 'function') return run();
+    const transportAny = this.transport as any;
+    if (typeof transportAny?.setMux !== 'function') return run();
     const baseDir = path.join(this.localDsh, 'dsh-maestro-sync', 'ssh-mux');
     const { openSshMux } = await import('./ssh-mux.js');
     let mux: any = null;
@@ -438,10 +438,10 @@ export class SyncService {
       throw e;
     }
     try {
-      setMux(mux);
+      transportAny.setMux(mux);
       return await run();
     } finally {
-      setMux(null);
+      transportAny.setMux(null);
       await mux.dispose();
     }
   }
