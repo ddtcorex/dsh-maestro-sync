@@ -42,8 +42,9 @@ describe('remote fingerprint cache', () => {
     const s = buildRemoteManifestScript('/home/kai/.dsh');
     expect(s).toContain(REMOTE_CACHE_REL);       // reads the cache
     expect(s).not.toMatch(/\bmv\b/);             // no rename
-    expect(s).not.toMatch(/>>?\s/);              // no file redirection
-    expect(s).not.toMatch(/>\s*[\w./-]+\.json/); // no json writes
+    expect(s).not.toMatch(/mv\s/);                // no rename
+    expect(s).not.toContain('.tmp.');              // no tmp-file staging
+    expect(s).not.toMatch(new RegExp('>\\s*' + REMOTE_CACHE_REL.replace(/\//g, '\\/'))); // never writes the cache
   });
 
   it('executes under bash against a real temp root: cached files skip hashing, changed files re-hash', () => {
