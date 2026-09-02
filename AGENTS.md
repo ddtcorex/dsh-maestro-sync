@@ -21,9 +21,12 @@ profile) when you want it.
 - **Preview is read-only and exact**: it stages remote eligible files once
   (argv-only `rsync --files-from`, checksum dry-run first) and reports
   `copy`/`merge`/`skip`/`conflict` with real added counts.
-- **Apply is the only mutation route**: requires `{ previewId, direction,
-  confirm: true }`, is single-use per preview, re-inventories both sides and
-  rejects a changed inventory as `STALE_PREVIEW` before any write.
+- **Apply is the freshest-inventory mutation route**: it re-inventories both
+  sides, recomputes the plan and publishes it with per-file CAS (expected
+  target SHA-256); a preview is single-use and expires after 60 s. Concurrent
+  mid-write modification is rejected (`CONCURRENT_MODIFICATION`); global
+  inventory-drift rejection was removed 2026-09-01 (`d9b2d33`) because a live
+  DSH home changes every turn.
 - **Bytes remain bytes**: `.jsonl.zstd` is staged/hashed/merged as Buffers
   through the validated Zstd artifact API (`session-plan.ts`, `session-merge.ts`)
   — never UTF-8-decoded. The standalone checksummed header frame is preserved.
