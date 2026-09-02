@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 // tests/use-backup.spec.tsx — R2-tab controller (backup/restore/gc flows).
 import { describe, it, expect } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
