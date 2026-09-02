@@ -17,16 +17,20 @@ export interface RemoteManifestEntry {
 
 export function buildRemoteManifestScript(dshRoot: string): string {
   // Fixed script; dshRoot is the validated absolute root (same trust rule as transport.list).
+  // Every loop-body statement must end with ';' — space-separated assignments
+  // inside a `do...done` one-liner break bash's parser ("unexpected end of file
+  // from while"), verified 2026-09-02.
+  const body = [
+    `rel=\${f#${dshRoot}/};`,
+    `sha=$(sha256sum -- "$f" | awk '{print $1}');`,
+    `size=$(wc -c < "$f" 2>/dev/null || echo 0);`,
+    `mtime=$(stat -c %Y -- "$f" 2>/dev/null || echo 0);`,
+    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$size" "$mtime" "$rel";`,
+  ].join(' ');
   return [
     `find ${dshRoot}/memories ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
-    `| while IFS= read -r -d '' f; do`,
-    `rel=\${f#${dshRoot}/}`,
-    `sha=$(sha256sum -- "$f" | awk '{print $1}')`,
-    `size=$(wc -c < "$f" 2>/dev/null || echo 0)`,
-    `mtime=$(stat -c %Y -- "$f" 2>/dev/null || echo 0)`,
-    `printf '%s\\t%s\\t%s\\t%s\\0' "$sha" "$size" "$mtime" "$rel"`,
-    `done`,
+    `| while IFS= read -r -d '' f; do ${body} done`,
   ].join(' ');
 }
 
