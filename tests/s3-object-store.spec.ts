@@ -54,3 +54,43 @@ describe('S3ObjectStore list/head/get', () => {
     }
   });
 });
+
+describe('S3ObjectStore put/delete', () => {
+  it('putIfAbsent is idempotent: a second put with the same key is a no-op (blob semantics)', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const store = new S3ObjectStore(cfg(h.url));
+    await store.putIfAbsent(h.bucket, 'blobs/sha256/aa', Buffer.from('v1'));
+    await store.putIfAbsent(h.bucket, 'blobs/sha256/aa', Buffer.from('v1'));
+    expect(h.objects().get('blobs/sha256/aa')!.toString('utf-8')).toBe('v1');
+  });
+
+  it('putConditional with a wrong ifMatch throws CONCURRENT_MODIFICATION and does not overwrite', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const store = new S3ObjectStore(cfg(h.url));
+    await store.putConditional(h.bucket, 'HEAD', Buffer.from('m1'));
+    const head = await store.head(h.bucket, 'HEAD');
+    await expect(store.putConditional(h.bucket, 'HEAD', Buffer.from('m2'), { ifMatch: 'wrong-etag' })).rejects.toMatchObject({ code: 'CONCURRENT_MODIFICATION' });
+    expect((await store.head(h.bucket, 'HEAD'))!.etag).toBe(head!.etag);
+  });
+
+  it('putConditional with ifNoneMatch on an existing key throws CONCURRENT_MODIFICATION', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const store = new S3ObjectStore(cfg(h.url));
+    await store.putIfAbsent(h.bucket, 'HEAD', Buffer.from('m1'));
+    await expect(store.putConditional(h.bucket, 'HEAD', Buffer.from('m2'), { ifNoneMatch: true })).rejects.toMatchObject({ code: 'CONCURRENT_MODIFICATION' });
+  });
+
+  it('deleteKeys deletes exactly the given keys', async () => {
+    const h = await startFakeS3();
+    handles.push(h);
+    const store = new S3ObjectStore(cfg(h.url));
+    for (const k of ['a', 'b', 'c']) await store.putIfAbsent(h.bucket, k, Buffer.from('x'));
+    await store.deleteKeys(h.bucket, ['a', 'c']);
+    expect(h.objects().has('a')).toBe(false);
+    expect(h.objects().has('c')).toBe(false);
+    expect(h.objects().has('b')).toBe(true);
+  });
+});
