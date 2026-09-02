@@ -196,7 +196,17 @@ export class BackupService {
 
     const failures: SyncFailureLike[] = [];
     const committed: string[] = [];
-    const fresh = await this.preview();
+    let fresh: BackupPreview;
+    try {
+      fresh = await this.preview();
+    } catch (e: any) {
+      // The store is unreachable/broken: fail closed with a structured journal —
+      // apply must never throw a raw network error after the preview gate.
+      try {
+        nodeFs.rmSync(pvPath, { force: true });
+      } catch {}
+      return { ok: false, revision: saved.revision, committed: [], failures: [{ phase: 'backup', code: 'PREVIEW_REFRESH_FAILED', detail: e?.message ?? String(e) }] };
+    }
     const prev = await this.readHeadManifest();
     const prevByPath = new Map((prev?.manifest.files ?? []).map((f) => [f.path, f]));
     const localPaths = this.listEligibleFiles();
