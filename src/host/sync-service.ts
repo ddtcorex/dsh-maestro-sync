@@ -670,6 +670,15 @@ export class SyncService {
               try {
                 await this.transport.commit(target, operationId, manifest);
                 committed.push(...paths);
+                // Best-effort remote fingerprint-cache refresh AFTER the commit
+                // succeeded. Preview stays strictly read-only: the cache is
+                // written only here (or by an explicit warm command). A warm
+                // failure must never fail an already-committed apply.
+                try {
+                  await this.transport.warmCache(target);
+                } catch (w: any) {
+                  failures.push(syncFailure('publish', 'WARM_FAILED', `fingerprint cache refresh failed (non-fatal): ${w?.message ?? String(w)}`) as SyncFailure);
+                }
               } catch (e: any) {
                 const code = e?.code && e.code !== 'TRANSPORT_ERROR' ? e.code : 'COMMIT_FAILED';
                 for (const p of paths) failures.push(syncFailure('publish', code, `remote commit failed: ${e?.message ?? String(e)}`, p) as SyncFailure);

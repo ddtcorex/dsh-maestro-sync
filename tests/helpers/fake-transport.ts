@@ -31,6 +31,7 @@ export interface FakeRemoteResult {
     commit: { operationId: string; manifest: Buffer }[];
     list: number;
     ensureAgent?: number;
+    warmCache?: number;
   };
   failNextCommitOnce?: boolean;
   failUploadAfter?: number;
@@ -115,6 +116,9 @@ export function createFakeRemote(initial: Map<string, Buffer> = new Map(), dshRo
       },
       ensureAgent: async () => {
         result.calls.ensureAgent = (result.calls.ensureAgent ?? 0) + 1;
+      },
+      warmCache: async () => {
+        result.calls.warmCache = (result.calls.warmCache ?? 0) + 1;
       },
       commit: async (target: RemoteTarget, operationId: string, manifest: Buffer) => {
         if (result.failNextCommitOnce) {

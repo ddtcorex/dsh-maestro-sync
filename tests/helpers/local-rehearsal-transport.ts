@@ -108,6 +108,21 @@ export class LocalRehearsalTransport implements SyncTransport {
     fs.writeFileSync(path.join(bin, REMOTE_AGENT_REL.split('/').pop()!), remoteAgentSource(), { mode: 0o700 });
   }
 
+  async warmCache(): Promise<void> {
+    // Mirror the real warm script: write <root>/.maestro-sync/fp.tsv fresh.
+    const manifest = await this.manifest({ host: 'local', dshRoot: this.remoteRoot });
+    const lines = manifest
+      .map((e) => {
+        const full = path.join(this.remoteRoot, e.path);
+        const st = fs.statSync(full, { bigint: true });
+        return `${e.path}\t${st.ino}\t${st.size}\t${st.mtimeNs}\t${st.ctimeNs}\t${e.sha256}`;
+      })
+      .join('\n');
+    const dir = path.join(this.remoteRoot, '.maestro-sync');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'fp.tsv'), lines + '\n');
+  }
+
   async commit(_target: RemoteTarget, operationId: string, manifest: Buffer): Promise<void> {
     const helper = path.join(this.remoteRoot, REMOTE_AGENT_REL);
     if (!fs.existsSync(helper)) throw new Error('remote agent not installed');
