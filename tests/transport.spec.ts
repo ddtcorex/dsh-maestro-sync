@@ -82,4 +82,27 @@ describe('transport', () => {
     await expect(transport.list({ host: 'host;id', dshRoot: '/home/kai/.dsh' })).rejects.toThrow();
     expect(runner.run).not.toHaveBeenCalled();
   });
+
+  it('manifest runs one ssh with the fixed script and parses NUL-framed stdout', async () => {
+    const entries = [
+      { path: 'memories/daily/a.md', sha256: 'a'.repeat(64), size: 5, mtimeSec: 1 },
+      { path: 'sessions/x/y/session.jsonl.zstd', sha256: 'b'.repeat(64), size: 7, mtimeSec: 2 },
+    ];
+    const runner: ProcessRunner = {
+      run: vi.fn(async (_file: string, args: readonly string[]) => {
+        const cmd = args.join(' ');
+        if (cmd.includes('sha256sum')) {
+          return { stdout: Buffer.from(entries.map((e) => `${e.sha256}\t${e.size}\t${e.mtimeSec}\t${e.path}\0`).join(''), 'utf-8'), stderr: Buffer.alloc(0), exitCode: 0 };
+        }
+        if (cmd.includes('printf')) return { stdout: Buffer.from('/home/kai'), stderr: Buffer.alloc(0), exitCode: 0 };
+        return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
+      }),
+    } as unknown as ProcessRunner;
+    const transport = new SshRsyncTransport(runner);
+    const out = await transport.manifest({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
+    expect(out.length).toBe(2);
+    expect(out[0]!.path).toBe('memories/daily/a.md');
+    expect(out[1]!.sha256).toBe('b'.repeat(64));
+    expect((runner.run as any).mock.calls[0][0]).toBe('ssh');
+  });
 });
