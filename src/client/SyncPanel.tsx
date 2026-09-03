@@ -20,44 +20,64 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const canSync = isConnected && !checking && !busy
   const planAgeSecs = preview?.expiresAt ? Math.max(0, Math.round((new Date(preview.expiresAt).getTime() - Date.now()) / 1000)) : 0
 
+  // Mobile-first progressive disclosure: buckets start collapsed on narrow
+  // screens (<640px) so the summary + actions fit one viewport; desktop and
+  // wider start expanded. jsdom (tests) reports 1024px → expanded.
+  const [collapsed, setCollapsed] = React.useState<Record<Bucket, boolean>>(() => {
+    const narrow = typeof window !== 'undefined' && typeof window.innerWidth === 'number' && window.innerWidth < 640
+    return { localOnly: narrow, remoteOnly: narrow }
+  })
+
   const renderBucket = (bucket: Bucket, heading: string, empty: string) => {
     const page = pages[bucket]
     const icon = bucket === 'localOnly' ? 'upload' : 'download'
+    const open = !collapsed[bucket]
     return (
-      <section data-sync-dcol="" data-bucket={bucket} aria-label={heading}>
+      <section data-sync-dcol="" data-bucket={bucket} data-collapsed={String(!open)} aria-label={heading}>
         <header data-sync-dcol-head="">
-          <span data-sync-dcol-title="">
-            <Icon name={icon} />
-            {heading}
-          </span>
-          <span data-sync-dcol-count="">
-            {page.files.length}/{page.total}
-          </span>
+          <button
+            type="button"
+            data-sync-dcol-toggle=""
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${heading}`}
+            onClick={() => setCollapsed((prev) => ({ ...prev, [bucket]: !prev[bucket] }))}
+          >
+            <span data-sync-dcol-title="">
+              <Icon name={open ? 'chevron-down' : 'chevron-right'} />
+              <Icon name={icon} />
+              {heading}
+            </span>
+            <span data-sync-dcol-count="">
+              {page.files.length}/{page.total}
+            </span>
+          </button>
         </header>
-        {isDisconnected ? (
-          <div data-sync-empty="">Cannot check remote — SSH to {connection!.host} is not connected.</div>
-        ) : page.files.length === 0 && !page.loaded ? (
-          <div data-sync-loading="">Checking {heading.toLowerCase()}…</div>
-        ) : page.files.length === 0 && !checking ? (
-          <div data-sync-empty="">{empty}</div>
-        ) : (
-          page.files.map((p: string) => {
-            const f = formatFile(p)
-            return (
-              <div key={p} data-sync-file="" title={p}>
-                <span data-sync-file-icon="" style={{ color: 'var(--dsw-alias-label-tertiary)' }}>
-                  <Icon name={f.icon} />
-                </span>
-                <span data-sync-file-main="">
-                  <span data-sync-file-title="">{f.title}</span>
-                  <span data-sync-file-path="">{f.path}</span>
-                </span>
-                <span data-sync-file-meta="">{f.meta}</span>
-              </div>
-            )
-          })
-        )}
-        {page.next != null ? (
+        {open ? (
+          isDisconnected ? (
+            <div data-sync-empty="">Cannot check remote — SSH to {connection!.host} is not connected.</div>
+          ) : page.files.length === 0 && !page.loaded ? (
+            <div data-sync-loading="">Checking {heading.toLowerCase()}…</div>
+          ) : page.files.length === 0 && !checking ? (
+            <div data-sync-empty="">{empty}</div>
+          ) : (
+            page.files.map((p: string) => {
+              const f = formatFile(p)
+              return (
+                <div key={p} data-sync-file="" title={p}>
+                  <span data-sync-file-icon="" style={{ color: 'var(--dsw-alias-label-tertiary)' }}>
+                    <Icon name={f.icon} />
+                  </span>
+                  <span data-sync-file-main="">
+                    <span data-sync-file-title="">{f.title}</span>
+                    <span data-sync-file-path="">{f.path}</span>
+                  </span>
+                  <span data-sync-file-meta="">{f.meta}</span>
+                </div>
+              )
+            })
+          )
+        ) : null}
+        {open && page.next != null ? (
           <footer data-sync-dcol-foot="">
             <Button size="sm" variant="ghost" onClick={() => void s.loadPage(bucket, page.next!)} aria-label={`Show more ${heading}`}>
               Show more
@@ -146,8 +166,8 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
         />
       </div>
 
-      {/* Primary actions */}
-      <div data-sync-actions="">
+      {/* Primary actions — sticky bottom bar on mobile (thumb reach) */}
+      <div data-sync-actions="" data-sync-actions-bar="">
         <Button variant="outline" icon="download" disabled={!canSync} data-testid="sync-preview-pull" onClick={() => void s.handlePreview('pull')}>
           {busy ? 'Working…' : 'Preview Pull'}
         </Button>

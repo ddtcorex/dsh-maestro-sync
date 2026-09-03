@@ -201,4 +201,56 @@ describe('SyncPanel', () => {
     expect((await screen.findAllByText(/not configured/i)).length).toBeGreaterThan(0);
     expect(screen.getByTestId('r2-preview-backup')).toBeDisabled();
   });
+
+  it('primary actions live in a sticky thumb-reach bar', async () => {
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      return { ok: true };
+    });
+    const { container } = render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
+    expect(container.querySelector('[data-sync-actions-bar]')).not.toBeNull();
+  });
+
+  it('bucket sections collapse and expand without losing pagination', async () => {
+    const user = userEvent.setup();
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 1, remoteOnly: 0, both: 0 });
+      if (method === 'status' && args?.bucket === 'localOnly') return carrier({ ok: true, total: 1, offset: 0, limit: 10, files: ['memories/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    // wide viewport (jsdom) starts expanded
+    const toggle = await screen.findByRole('button', { name: /collapse ready to send/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByText('Global memory')).toBeInTheDocument();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Global memory')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /expand ready to send/i }));
+    expect(screen.getByText('Global memory')).toBeInTheDocument();
+  });
+
+  it('R2 restore/GC actions live behind a More menu; backup stays primary', async () => {
+    const user = userEvent.setup();
+    const rpc = vi.fn(async (_ch: string, method: string) => {
+      if (method === 'backupStatus') return carrier({ configured: true, source: 'env', bucket: 'b', prefix: 'p/', lastManifest: null, eligible: { md: 1, sessions: 1 } });
+      if (method === 'status') return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await user.click(screen.getByTestId('sync-tab-r2'));
+    await waitFor(() => expect(screen.getByTestId('r2-preview-backup')).toBeEnabled());
+    // restore/GC hidden until the menu opens
+    expect(screen.queryByTestId('r2-restore-newdir')).toBeNull();
+    const more = screen.getByTestId('r2-more');
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    await user.click(more);
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('r2-restore-newdir')).toBeInTheDocument();
+    expect(screen.getByTestId('r2-restore-inplace')).toBeInTheDocument();
+    expect(screen.getByTestId('r2-preview-gc')).toBeInTheDocument();
+  });
 });

@@ -12,6 +12,10 @@ const sourceLabel = (s: string | undefined) => (s === 'env' ? 'Env' : s === 'fil
 export function R2SyncPanel(props: { ctx: any }): React.ReactElement {
   const b = useBackupTarget(props.ctx)
   const st = b.status
+  // Mobile-first: only the primary backup action stays visible; restore/GC
+  // live behind a More menu so the row never overflows 360px viewports.
+  const [moreOpen, setMoreOpen] = React.useState(false)
+  const closeMore = () => setMoreOpen(false)
 
   const banner = () => {
     if (!st) return null
@@ -99,19 +103,35 @@ export function R2SyncPanel(props: { ctx: any }): React.ReactElement {
         <StatTile icon="refresh" value={String(st?.eligible?.sessions ?? 0)} label="sessions" />
         <StatTile icon="check" value={st?.lastManifest ? 'yes' : 'no'} label="last backup" />
       </div>
-      <div data-r2-actions="">
+      <div data-r2-actions="" data-sync-actions-bar="">
         <Button data-testid="r2-preview-backup" kind="primary" disabled={!b.canBackup} onClick={() => void b.previewBackup()}>
           Preview Backup
         </Button>
-        <Button data-testid="r2-restore-newdir" disabled={!b.canBackup} onClick={() => void b.previewRestore('new-dir')}>
-          Restore to new folder…
-        </Button>
-        <Button data-testid="r2-restore-inplace" variant="ghost" disabled={!b.canBackup} onClick={() => void b.previewRestore('in-place')}>
-          Restore in place…
-        </Button>
-        <Button data-testid="r2-preview-gc" variant="ghost" disabled={!b.canBackup} onClick={() => void b.previewGc()}>
-          Preview GC
-        </Button>
+        <div data-r2-more="">
+          <Button
+            data-testid="r2-more"
+            variant="outline"
+            disabled={!b.canBackup}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((v) => !v)}
+          >
+            More
+          </Button>
+          {moreOpen ? (
+            <div data-r2-more-menu="" role="menu" aria-label="More backup actions">
+              <Button data-testid="r2-restore-newdir" role="menuitem" variant="ghost" disabled={!b.canBackup} onClick={() => { closeMore(); void b.previewRestore('new-dir') }}>
+                Restore to new folder…
+              </Button>
+              <Button data-testid="r2-restore-inplace" role="menuitem" variant="ghost" disabled={!b.canBackup} onClick={() => { closeMore(); void b.previewRestore('in-place') }}>
+                Restore in place…
+              </Button>
+              <Button data-testid="r2-preview-gc" role="menuitem" variant="ghost" disabled={!b.canBackup} onClick={() => { closeMore(); void b.previewGc() }}>
+                Preview GC
+              </Button>
+            </div>
+          ) : null}
+        </div>
       </div>
       {b.error ? <div role="alert" data-sync-error="">{b.error}</div> : null}
       {dialog()}
