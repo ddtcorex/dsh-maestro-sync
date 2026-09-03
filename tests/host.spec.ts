@@ -168,4 +168,31 @@ describe('host', () => {
       else process.env.DSH_HOME = prevHome;
     }
   });
+
+  it('saveR2Config persists a valid target and rejects bad fields', async () => {
+    const { rpcHandler } = await bootPlugin();
+    const badBucket = await rpcHandler('saveR2Config', { provider: 'r2', bucket: 'UPPER', prefix: 'p/' });
+    expect(badBucket.ok).toBe(false);
+    expect(badBucket.error.code).toBe('INVALID_R2_CONFIG');
+    const missing = await rpcHandler('saveR2Config', { provider: 'r2', prefix: 'p/' });
+    expect(missing.ok).toBe(false);
+
+    const { mkdtempSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const prevHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'sync-save-r2-'));
+    try {
+      const good = await rpcHandler('saveR2Config', { provider: 'r2', accountId: '', endpoint: '', region: 'auto', bucket: 'maestro-backup', prefix: 'v1/hosts/t' });
+      expect(good.ok).toBe(true);
+      expect(good.value.r2).toMatchObject({ provider: 'r2', bucket: 'maestro-backup', prefix: 'v1/hosts/t/' });
+      const { load } = await import('@ddtcorex/dsh-maestro-config-lib');
+      const doc: any = await load({ dshHome: process.env.DSH_HOME });
+      expect(doc.domains.sync.r2).toMatchObject({ bucket: 'maestro-backup', prefix: 'v1/hosts/t/' });
+      expect(JSON.stringify(doc.domains.sync.r2)).not.toContain('secret');
+    } finally {
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+    }
+  });
 });

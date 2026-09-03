@@ -260,13 +260,28 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
 [data-sync-ssh-input]:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
 [data-sync-ssh-input]:disabled { opacity: 0.6; }
 [data-sync-ssh-row] { display: flex; gap: 8px; flex-wrap: wrap; }
-[data-sync-ssh-row] > [data-sync-btn]:last-child { flex: 1 1 0; }
+[data-sync-ssh-row] > [data-sync-btn] { flex: 1 1 0; }
 [data-sync-ssh-src] { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-secondary); }
 /* R2 status banner — badge + hint need a real gap (was running together) */
 [data-r2-summary] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* R2 backup-target form — same language as the SSH section */
+[data-r2-config] { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-2); }
+[data-r2-config-label] { font-size: 11px; color: var(--dsw-alias-label-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+[data-r2-field] { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+[data-r2-field-label] { font-size: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); }
+[data-r2-field-input] { min-height: 44px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; }
+[data-r2-field-input]:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
+[data-r2-field-input]:disabled { opacity: 0.6; }
+[data-r2-field-hint] { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-tertiary); }
+[data-r2-provider-row] { display: flex; gap: 8px; }
+[data-r2-provider-opt] { flex: 1 1 0; min-height: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+[data-r2-provider-opt][aria-pressed="true"] { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l1); }
+[data-r2-provider-opt]:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
+[data-r2-config-row] { display: flex; gap: 8px; }
+[data-r2-config-row] > [data-sync-btn] { flex: 1 1 0; }
+[data-r2-config-hint] { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-secondary); }
 @media (max-width: 640px) {
-  [data-sync-ssh-row] { flex-direction: column; }
-  [data-sync-ssh-row] > [data-sync-btn] { width: 100%; min-height: 48px !important; }
+  [data-sync-ssh-row] > [data-sync-btn] { min-height: 48px !important; }
 }
 `
 

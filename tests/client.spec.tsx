@@ -332,4 +332,34 @@ describe('SyncPanel', () => {
     expect(alert.textContent).toContain('invalid host');
     expect(statusCalls(rpc)).not.toContain('check');
   });
+
+  it('R2 target form prefills from status and saves non-secret fields', async () => {
+    const user = userEvent.setup();
+    let saved: any = null;
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'backupStatus') {
+        return carrier({ configured: true, source: 'env', bucket: 'maestro-backup', prefix: 'v1/hosts/t/', lastManifest: null, eligible: { md: 1, sessions: 1 }, r2: { provider: 'r2', endpoint: 'https://x.r2.cloudflarestorage.com', region: 'auto', bucket: 'maestro-backup', prefix: 'v1/hosts/t/' } });
+      }
+      if (method === 'saveR2Config') {
+        saved = args;
+        return carrier({ r2: { provider: 'r2', endpoint: '', region: 'auto', bucket: args.bucket, prefix: args.prefix } });
+      }
+      if (method === 'status') return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await user.click(screen.getByTestId('sync-tab-r2'));
+    // fields prefill from the non-secret status snapshot
+    const bucketInput = await screen.findByTestId('r2-cfg-bucket');
+    await waitFor(() => expect(bucketInput).toHaveValue('maestro-backup'));
+    expect(screen.getByTestId('r2-save-config')).toBeEnabled();
+    // editing + saving sends only non-secret fields
+    await user.clear(bucketInput);
+    await user.type(bucketInput, 'my-bucket');
+    await user.click(screen.getByTestId('r2-save-config'));
+    await waitFor(() => expect(saved).not.toBeNull());
+    expect(saved).toMatchObject({ provider: 'r2', bucket: 'my-bucket', prefix: 'v1/hosts/t/' });
+    expect(JSON.stringify(saved)).not.toContain('secret');
+    expect(JSON.stringify(saved)).not.toContain('accessKey');
+  });
 });

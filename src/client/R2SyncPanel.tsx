@@ -9,6 +9,91 @@ import { Button, StatTile, Badge } from './ui.js'
 
 const sourceLabel = (s: string | undefined) => (s === 'env' ? 'Env' : s === 'file' ? 'Private file' : 'Not configured')
 
+type BackupApi = ReturnType<typeof useBackupTarget>
+
+function field(input: { id: string; label: string; value: string; placeholder: string; onChange: (v: string) => void; disabled: boolean; hint?: string }) {
+  return (
+    <div data-r2-field="">
+      <label data-r2-field-label="" htmlFor={input.id}>{input.label}</label>
+      <input
+        id={input.id}
+        data-r2-field-input=""
+        data-testid={input.id}
+        value={input.value}
+        onChange={(e) => input.onChange(e.target.value)}
+        placeholder={input.placeholder}
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        disabled={input.disabled}
+      />
+      {input.hint ? <span data-r2-field-hint="">{input.hint}</span> : null}
+    </div>
+  )
+}
+
+/**
+ * Non-secret backup target form — mirrors the SSH section on the Remote tab.
+ * Keys are never asked for here: they come from env or the 0600 sidecar.
+ */
+function ConfigForm(props: { b: BackupApi }): React.ReactElement {
+  const b = props.b
+  const st = b.status
+  const [provider, setProvider] = React.useState('r2')
+  const [accountId, setAccountId] = React.useState('')
+  const [endpoint, setEndpoint] = React.useState('')
+  const [region, setRegion] = React.useState('')
+  const [bucket, setBucket] = React.useState('')
+  const [prefix, setPrefix] = React.useState('')
+  const [primed, setPrimed] = React.useState(false)
+  React.useEffect(() => {
+    if (primed || !st) return
+    const r = st.r2
+    setProvider(r?.provider === 'aws' ? 'aws' : 'r2')
+    setAccountId('')
+    setEndpoint(r?.endpoint ?? '')
+    setRegion(r?.region ?? '')
+    setBucket(r?.bucket ?? '')
+    setPrefix(st.prefix ?? '')
+    setPrimed(true)
+  }, [st, primed])
+  const busy = b.busy || b.checking
+  return (
+    <div data-r2-config="">
+      <span data-r2-config-label="">Backup target</span>
+      <div data-r2-field="">
+        <label data-r2-field-label="" htmlFor="r2-cfg-provider">Provider</label>
+        <div data-r2-provider-row="" role="radiogroup" aria-label="Provider">
+          {(['r2', 'aws'] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              data-testid={`r2-cfg-provider-${p}`}
+              data-r2-provider-opt=""
+              aria-pressed={provider === p}
+              disabled={busy}
+              onClick={() => setProvider(p)}
+            >
+              {p === 'r2' ? 'Cloudflare R2' : 'AWS S3'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {provider === 'r2' ? field({ id: 'r2-cfg-account', label: 'Account ID', value: accountId, placeholder: '32 hex chars (empty = keep default endpoint)', onChange: setAccountId, disabled: busy }) : null}
+      {field({ id: 'r2-cfg-endpoint', label: 'Endpoint', value: endpoint, placeholder: 'empty = default for provider', onChange: setEndpoint, disabled: busy })}
+      {field({ id: 'r2-cfg-region', label: 'Region', value: region, placeholder: 'auto', onChange: setRegion, disabled: busy })}
+      {field({ id: 'r2-cfg-bucket', label: 'Bucket', value: bucket, placeholder: 'maestro-backup', onChange: setBucket, disabled: busy })}
+      {field({ id: 'r2-cfg-prefix', label: 'Prefix', value: prefix, placeholder: 'v1/hosts/<id>/', onChange: setPrefix, disabled: busy })}
+      <div data-r2-config-row="">
+        <Button data-testid="r2-save-config" variant="primary" disabled={busy} busy={b.busy} onClick={() => void b.saveR2Config({ provider, accountId, endpoint, region, bucket, prefix })}>
+          {b.busy ? 'Saving…' : 'Save target'}
+        </Button>
+      </div>
+      <span data-r2-config-hint="">Access keys are never entered here — set R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY env or the 0600 sidecar file.</span>
+    </div>
+  )
+}
+
 export function R2SyncPanel(props: { b: ReturnType<typeof useBackupTarget> }): React.ReactElement {
   const b = props.b
   const st = b.status
@@ -89,6 +174,7 @@ export function R2SyncPanel(props: { b: ReturnType<typeof useBackupTarget> }): R
   return (
     <div data-sync-root="" data-r2-root="" aria-busy={b.busy}>
       {banner()}
+      <ConfigForm b={b} />
       <div data-r2-stats="">
         <StatTile icon="server" value={String(st?.eligible?.md ?? 0)} label="memories" />
         <StatTile icon="refresh" value={String(st?.eligible?.sessions ?? 0)} label="sessions" />

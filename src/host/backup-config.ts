@@ -86,3 +86,67 @@ export async function resolveBackupTarget(
   }
   return { config: { provider, endpoint, region, bucket, prefix }, secrets, source };
 }
+
+export interface R2ConfigInput {
+  provider?: unknown;
+  accountId?: unknown;
+  endpoint?: unknown;
+  region?: unknown;
+  bucket?: unknown;
+  prefix?: unknown;
+}
+
+export interface NormalizedR2Config {
+  provider: 'r2' | 'aws';
+  accountId: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  prefix: string;
+}
+
+const SHELL_META_RE = /[;`$|&><*?'"\\(){}!\s=]/;
+const BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
+const REGION_RE = /^[A-Za-z0-9-]{1,32}$/;
+const ACCOUNT_RE = /^[0-9a-f]{32}$/i;
+const PREFIX_SEG_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Validate + normalize non-secret R2/S3 config from the Settings UI.
+ * Fail-closed: throws on the first invalid field. Empty strings mean
+ * "use the default" and are stripped so built-in fallbacks keep working.
+ * Secret material is never accepted here — keys live in env or the 0600
+ * sidecar only.
+ */
+export function validateR2ConfigInput(input: R2ConfigInput): NormalizedR2Config {
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const provider = str(input.provider) || 'r2';
+  if (provider !== 'r2' && provider !== 'aws') throw new Error(`invalid provider: ${JSON.stringify(provider)} (want 'r2'|'aws')`);
+  const accountId = str(input.accountId);
+  if (accountId && !ACCOUNT_RE.test(accountId)) throw new Error('invalid accountId: want 32 hex chars');
+  if (provider === 'aws' && accountId) throw new Error('invalid accountId: only meaningful for provider r2');
+  const endpoint = str(input.endpoint);
+  if (endpoint) {
+    if (SHELL_META_RE.test(endpoint) || endpoint.length > 256) throw new Error('invalid endpoint: illegal characters');
+    if (!/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=-]*)?$/.test(endpoint)) {
+      throw new Error('invalid endpoint: want an https:// URL');
+    }
+  }
+  const region = str(input.region);
+  if (region && !REGION_RE.test(region)) throw new Error(`invalid region: ${JSON.stringify(region)}`);
+  const bucket = str(input.bucket);
+  if (!bucket) throw new Error('bucket is required');
+  if (!BUCKET_RE.test(bucket)) throw new Error(`invalid bucket: ${JSON.stringify(bucket)} (3-63 lowercase letters/digits/dots/hyphens)`);
+  let prefix = str(input.prefix);
+  if (!prefix) throw new Error('prefix is required');
+  if (prefix.startsWith('/') || prefix.includes('\\') || prefix.includes('..') || /[\u0000-\u001f\u007f]/.test(prefix)) {
+    throw new Error(`invalid prefix: ${JSON.stringify(prefix)}`);
+  }
+  if (!prefix.endsWith('/')) prefix += '/';
+  const segs = prefix.split('/').filter((s) => s.length > 0);
+  if (segs.length === 0 || segs.length > 8 || !segs.every((s) => PREFIX_SEG_RE.test(s))) {
+    throw new Error(`invalid prefix: ${JSON.stringify(prefix)}`);
+  }
+  if (prefix.length > 200) throw new Error('invalid prefix: too long');
+  return { provider, accountId, endpoint, region, bucket, prefix };
+}
