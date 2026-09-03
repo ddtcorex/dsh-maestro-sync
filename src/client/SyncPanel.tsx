@@ -16,13 +16,29 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)
   const b = useBackupTarget(props.ctx)
   const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
-  const { connection, checking, busy, error, result, status, remoteHost, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
+  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
   const st = b.status
 
   const isConnected = connection?.ok === true
   const isDisconnected = connection?.ok === false
   const canSync = isConnected && !checking && !busy
   const planAgeSecs = preview?.expiresAt ? Math.max(0, Math.round((new Date(preview.expiresAt).getTime() - Date.now()) / 1000)) : 0
+
+  // SSH target form state — prefilled from the saved/env/default target once
+  // it loads; the user edits, Saves, then explicitly Checks. Nothing probes
+  // SSH until Check is pressed and nothing unlocks until it passes.
+  const [hostInput, setHostInput] = React.useState('')
+  React.useEffect(() => {
+    if (hostInput === '' && remoteHost !== '…') setHostInput(remoteHost)
+  }, [remoteHost, hostInput])
+  const handleCheck = React.useCallback(async () => {
+    const host = hostInput.trim()
+    if (!host) return
+    const saved = await s.saveRemoteHost(host)
+    if (!saved.ok) return
+    await s.checkConnection()
+  }, [hostInput, s])
+  const sourceLabel = remoteSource === 'settings' ? 'Saved in settings' : remoteSource === 'env' ? 'From REMOTE_HOST env' : 'Built-in default'
 
   // Mobile-first progressive disclosure: buckets start collapsed on narrow
   // screens (<640px) so the summary + actions fit one viewport; desktop and
@@ -102,7 +118,9 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           ? `${connection!.host} · ${humanSummary(status)}`
           : isDisconnected
             ? `Cannot reach ${connection!.host}`
-            : humanSummary(status)
+            : connection === null
+              ? 'Not checked yet — configure SSH and check'
+              : humanSummary(status)
       : b.checking
         ? 'Checking backup configuration…'
         : st?.configured
@@ -111,6 +129,34 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
 
   const renderRemote = () => (
     <div data-sync-root="" aria-busy={busy || checking}>
+      {/* SSH configuration — the user fills the target, Saves, then explicitly
+          Checks. Nothing below unlocks until the check passes. */}
+      <div data-sync-ssh="">
+        <label data-sync-ssh-label="" htmlFor="sync-ssh-host">SSH target</label>
+        <input
+          id="sync-ssh-host"
+          data-sync-ssh-input=""
+          data-testid="sync-ssh-host"
+          value={hostInput}
+          onChange={(e) => setHostInput(e.target.value)}
+          placeholder="user@host"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          disabled={checking || busy}
+          aria-describedby="sync-ssh-src"
+        />
+        <div data-sync-ssh-row="">
+          <Button variant="outline" data-testid="sync-save-host" disabled={checking || busy || hostInput.trim().length === 0} onClick={() => void s.saveRemoteHost(hostInput.trim())}>
+            Save
+          </Button>
+          <Button variant="primary" data-testid="sync-check-connection" disabled={checking || busy || hostInput.trim().length === 0} busy={checking} onClick={() => void handleCheck()}>
+            {checking ? 'Checking…' : 'Check connection'}
+          </Button>
+        </div>
+        <span id="sync-ssh-src" data-sync-ssh-src="">{sourceLabel}</span>
+      </div>
+
       {/* Connection banner (Refresh lives here so the header stays badge+title+status) */}
       <div data-sync-conn="" data-state={isDisconnected ? 'bad' : checking ? 'checking' : 'ok'} data-testid="sync-connection">
         <span data-sync-conn-dot="" />
@@ -131,15 +177,17 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
               <span data-sync-conn-desc="">{connection!.error ? String(connection!.error).slice(0, 220) : 'SSH failed. Check that the host is reachable and your key is loaded.'}</span>
             </>
           ) : (
-            <span data-sync-conn-title="">Checking connection…</span>
+            <span data-sync-conn-title="">Not checked yet — configure SSH above, then Check connection.</span>
           )}
         </span>
-        <Button variant="ghost" size="sm" icon="refresh" busy={checking} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', flex: 'none', alignSelf: 'center' }}>
+        <Button variant="ghost" size="sm" icon="refresh" busy={checking} disabled={!isConnected} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', flex: 'none', alignSelf: 'center' }}>
           {checking ? 'Checking' : 'Refresh'}
         </Button>
       </div>
 
-      {/* Identity fields — host + last sync */}
+      {isConnected ? (
+        <>
+          {/* Identity fields — host + last sync */}
       <div data-sync-fields="">
         <div data-sync-field="">
           <span data-sync-field-label="">Remote host</span>
@@ -216,6 +264,30 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           </span>
         </div>
       ) : null}
+      {/* Results (announced) — inside the gate: only a passed check produces one */}
+
+      {/* File list sections — everything stays inside Settings */}
+      <div data-sync-filetables="">
+        {renderBucket('remoteOnly', 'Coming from the other machine', 'Nothing to pull — the other machine has no eligible files here.')}
+        {renderBucket('localOnly', 'Ready to send', 'Nothing to push — this machine has no eligible files here.')}
+      </div>
+        </>
+      ) : (
+        <div data-sync-notice="" data-tone="ok" role="status">
+          <span data-sync-notice-icon="">
+            <Icon name={isDisconnected ? 'alert' : 'clock'} />
+          </span>
+          <span data-sync-notice-main="">
+            <span data-sync-notice-title="">{isDisconnected ? 'Connection failed' : 'Preview and file lists are locked'}</span>
+            <span data-sync-notice-desc="">
+              {isDisconnected
+                ? 'Fix the SSH target above and check again.'
+                : 'Configure the SSH target above, then Check connection — everything below unlocks after a successful check.'}
+            </span>
+          </span>
+        </div>
+      )}
+
       {error ? (
         <div data-sync-notice="" data-tone="bad" role="alert">
           <span data-sync-notice-icon="">
@@ -227,12 +299,6 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           </span>
         </div>
       ) : null}
-
-      {/* File list sections — everything stays inside Settings */}
-      <div data-sync-filetables="">
-        {renderBucket('remoteOnly', 'Coming from the other machine', 'Nothing to pull — the other machine has no eligible files here.')}
-        {renderBucket('localOnly', 'Ready to send', 'Nothing to push — this machine has no eligible files here.')}
-      </div>
 
       {/* Confirmation dialog — the only place apply exists */}
       {confirmOpen && preview ? (

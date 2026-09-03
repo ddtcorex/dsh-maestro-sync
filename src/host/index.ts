@@ -11,7 +11,8 @@ import { loadSyncConfig } from './config.js';
 import { BackupService } from './backup-service.js';
 import { S3ObjectStore } from './s3-object-store.js';
 import { resolveBackupTarget } from './backup-config.js';
-import { load } from '@ddtcorex/dsh-maestro-config-lib';
+import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
+import { validateHost } from './validation.js';
 import type { PreviewJobState } from './sync-types.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
@@ -327,6 +328,31 @@ export default {
               case 'check': {
                 const r = await svc.checkConnection();
                 return okCarrier({ connection: r, remoteHost: r.host });
+              }
+              case 'getRemoteConfig': {
+                // Effective SSH target + where it came from (no auto-check;
+                // the UI checks explicitly via 'check').
+                const doc = await load();
+                const stored = (doc.domains?.sync as Record<string, unknown> | undefined)?.remoteHost;
+                const cfg = await loadSyncConfig();
+                const source =
+                  typeof stored === 'string' && stored.length > 0
+                    ? 'settings'
+                    : process.env.REMOTE_HOST || process.env.REMOTE
+                      ? 'env'
+                      : 'default';
+                return okCarrier({ remoteHost: cfg.remoteHost, source });
+              }
+              case 'saveRemoteHost': {
+                const raw = (args as any)?.host;
+                let host: string;
+                try {
+                  host = validateHost(typeof raw === 'string' ? raw.trim() : '');
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? 'invalid host', 'INVALID_HOST');
+                }
+                await saveDomain('sync', { remoteHost: host });
+                return okCarrier({ remoteHost: host });
               }
               case 'preview': {
                 const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';

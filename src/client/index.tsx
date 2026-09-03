@@ -253,6 +253,21 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
   [data-sync-stat-value] { font-size: 18px; }
   [data-sync-stat-hint] { display: none; }
 }
+/* SSH configuration — user-filled target, explicit check, nothing auto-probes */
+[data-sync-ssh] { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; background: var(--dsw-alias-bg-layer-2); }
+[data-sync-ssh-label] { font-size: 11px; color: var(--dsw-alias-label-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+[data-sync-ssh-input] { min-height: 44px; padding: 0 12px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 10px; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; width: 100%; box-sizing: border-box; }
+[data-sync-ssh-input]:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
+[data-sync-ssh-input]:disabled { opacity: 0.6; }
+[data-sync-ssh-row] { display: flex; gap: 8px; flex-wrap: wrap; }
+[data-sync-ssh-row] > [data-sync-btn]:last-child { flex: 1 1 0; }
+[data-sync-ssh-src] { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-secondary); }
+/* R2 status banner — badge + hint need a real gap (was running together) */
+[data-r2-summary] { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  [data-sync-ssh-row] { flex-direction: column; }
+  [data-sync-ssh-row] > [data-sync-btn] { width: 100%; min-height: 48px !important; }
+}
 `
 
 function apply(ctx: any): void {

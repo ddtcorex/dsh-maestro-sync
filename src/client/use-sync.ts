@@ -28,6 +28,8 @@ export type Bucket = 'localOnly' | 'remoteOnly'
 
 export function useSync(ctx: any) {
   const [remoteHost, setRemoteHost] = React.useState<string>('…')
+  // Where the SSH target came from: settings (saved) | env | default.
+  const [remoteSource, setRemoteSource] = React.useState<string>('default')
   const [lastSync, setLastSync] = React.useState<string | null>(() => {
     try {
       return typeof localStorage !== 'undefined' ? localStorage.getItem('dsh-maestro-sync:lastSync') : null
@@ -37,7 +39,8 @@ export function useSync(ctx: any) {
   })
   const [status, setStatus] = React.useState<any>(null)
   const [connection, setConnection] = React.useState<SyncConnection | null>(null)
-  const [checking, setChecking] = React.useState<boolean>(true)
+  // Idle until the user explicitly checks: entering the tab never probes SSH.
+  const [checking, setChecking] = React.useState<boolean>(false)
   const [busy, setBusy] = React.useState<boolean>(false)
   const [result, setResult] = React.useState<{ kind: string; ok: boolean; text: string } | null>(null)
   const [error, setError] = React.useState<string>('')
@@ -116,8 +119,17 @@ export function useSync(ctx: any) {
   }, [call, loadPage])
 
   React.useEffect(() => {
-    void loadStatus()
-  }, [loadStatus])
+    // Load the saved SSH target only — never probe the connection on mount.
+    void (async () => {
+      try {
+        const v: any = await call('getRemoteConfig', {})
+        if (v?.remoteHost) setRemoteHost(String(v.remoteHost))
+        if (typeof v?.source === 'string') setRemoteSource(v.source)
+      } catch {
+        // leave the placeholder; the user can still type a host and check
+      }
+    })()
+  }, [call])
 
   const persistLastSync = React.useCallback((ts: string) => {
     setLastSync(ts)
@@ -212,6 +224,58 @@ export function useSync(ctx: any) {
     setPreview(null)
   }, [])
 
+  /** Persist the SSH target to the settings store (no probing). */
+  const saveRemoteHost = React.useCallback(
+    async (host: string): Promise<{ ok: boolean; error?: string }> => {
+      setError('')
+      try {
+        const res: any = await call('saveRemoteHost', { host })
+        if (res?.ok === false) {
+          setError(res?.error ?? 'save failed')
+          return { ok: false, error: res?.error ?? 'save failed' }
+        }
+        if (res?.remoteHost) {
+          setRemoteHost(String(res.remoteHost))
+          setRemoteSource('settings')
+        }
+        return { ok: true }
+      } catch (e: any) {
+        const msg = e?.message ?? String(e)
+        setError(msg)
+        return { ok: false, error: msg }
+      }
+    },
+    [call],
+  )
+
+  /**
+   * Explicit connection check (the ONLY auto path is Apply's own refresh).
+   * On success the target is persisted and the status/pages load, unlocking
+   * Preview and the file lists; on failure everything stays gated.
+   */
+  const checkConnection = React.useCallback(async (): Promise<boolean> => {
+    setError('')
+    setResult(null)
+    setChecking(true)
+    try {
+      const res: any = await call('check', {})
+      const conn = res?.connection ?? null
+      if (!conn || conn.ok !== true) {
+        setConnection(conn ?? { ok: false, host: remoteHost, error: res?.error ?? 'connection failed' })
+        return false
+      }
+      setConnection(conn)
+      if (typeof res?.remoteHost === 'string' && res.remoteHost) setRemoteHost(res.remoteHost)
+      await loadStatus()
+      return true
+    } catch (e: any) {
+      setConnection({ ok: false, host: remoteHost, error: e?.message ?? String(e) })
+      return false
+    } finally {
+      setChecking(false)
+    }
+  }, [call, loadStatus, remoteHost])
+
   React.useEffect(() => {
     if (!confirmOpen) return
     const onKey = (e: KeyboardEvent) => {
@@ -223,6 +287,7 @@ export function useSync(ctx: any) {
 
   return {
     remoteHost,
+    remoteSource,
     lastSync,
     status,
     connection,
@@ -241,6 +306,8 @@ export function useSync(ctx: any) {
     setResult,
     loadStatus,
     loadPage,
+    saveRemoteHost,
+    checkConnection,
     handlePreview,
     handleApply,
     cancelDialog,

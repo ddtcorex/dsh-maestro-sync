@@ -23,6 +23,8 @@ const carrier = (value: any) => ({ ok: true, value });
 
 function statusRpc() {
   return vi.fn(async (_ch: string, method: string, args: any) => {
+    const cf = checkFlowBranches(method);
+    if (cf) return cf;
     if (method === 'status' && !args?.bucket) {
       return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 1, both: 3 });
     }
@@ -57,6 +59,18 @@ function statusRpc() {
 
 beforeEach(() => cleanup());
 
+async function driveCheck() {
+  await waitFor(() => expect(screen.getByTestId('sync-check-connection')).toBeEnabled());
+  fireEvent.click(screen.getByTestId('sync-check-connection'));
+}
+
+function checkFlowBranches(method: string) {
+  if (method === 'getRemoteConfig') return carrier({ remoteHost: 'sync-host', source: 'default' });
+  if (method === 'saveRemoteHost') return carrier({ remoteHost: 'sync-host' });
+  if (method === 'check') return carrier({ connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+  return null;
+}
+
 describe('SyncPanel file lists', () => {
   it('renders both bucket tables from status pages and pages them with Show more', async () => {
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
@@ -71,9 +85,12 @@ describe('SyncPanel file lists', () => {
         const files = Array.from({ length: 12 }, (_, i) => `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`).slice(start, start + 10);
         return carrier({ ok: true, total: 12, offset: start, limit: 10, files, nextCursor: start + 10 < 12 ? start + 10 : null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       }
+      const cf = checkFlowBranches(method);
+      if (cf) return cf;
       return carrier({ ok: true });
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await driveCheck();
 
     await waitFor(() => expect(screen.getAllByText('Coming from the other machine').length).toBeGreaterThan(0));
     expect(screen.getAllByText('Ready to send').length).toBeGreaterThan(0);
@@ -91,6 +108,7 @@ describe('SyncPanel file lists', () => {
   it('opens the confirmation dialog from a preview inside the card', async () => {
     const rpc = statusRpc();
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await driveCheck();
     await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
     fireEvent.click(screen.getByTestId('sync-preview-pull'));
     const dialog = await screen.findByRole('dialog');
@@ -130,9 +148,12 @@ describe('SyncPanel file lists', () => {
           },
         });
       }
+      const cf = checkFlowBranches(method);
+      if (cf) return cf;
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await driveCheck();
     await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
     fireEvent.click(screen.getByTestId('sync-preview-pull'));
     // progress bar appears while the job is hashing sessions
