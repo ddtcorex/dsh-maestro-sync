@@ -10,8 +10,9 @@ import { SyncService } from './sync-service.js';
 import { loadSyncConfig } from './config.js';
 import { BackupService } from './backup-service.js';
 import { S3ObjectStore } from './s3-object-store.js';
-import { resolveBackupTarget } from './backup-config.js';
-import { load } from '@ddtcorex/dsh-maestro-config-lib';
+import { resolveBackupTarget, validateR2ConfigInput, type NormalizedR2Config } from './backup-config.js';
+import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
+import { validateHost } from './validation.js';
 import type { PreviewJobState } from './sync-types.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
@@ -328,6 +329,56 @@ export default {
                 const r = await svc.checkConnection();
                 return okCarrier({ connection: r, remoteHost: r.host });
               }
+              case 'getRemoteConfig': {
+                // Effective SSH target + where it came from (no auto-check;
+                // the UI checks explicitly via 'check').
+                const doc = await load();
+                const stored = (doc.domains?.sync as Record<string, unknown> | undefined)?.remoteHost;
+                const cfg = await loadSyncConfig();
+                const source =
+                  typeof stored === 'string' && stored.length > 0
+                    ? 'settings'
+                    : process.env.REMOTE_HOST || process.env.REMOTE
+                      ? 'env'
+                      : 'default';
+                return okCarrier({ remoteHost: cfg.remoteHost, source });
+              }
+              case 'saveRemoteHost': {
+                const raw = (args as any)?.host;
+                let host: string;
+                try {
+                  host = validateHost(typeof raw === 'string' ? raw.trim() : '');
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? 'invalid host', 'INVALID_HOST');
+                }
+                await saveDomain('sync', { remoteHost: host });
+                return okCarrier({ remoteHost: host });
+              }
+              case 'saveR2Config': {
+                // Non-secret backup target only — secret material is never
+                // accepted here (env or the 0600 sidecar).
+                let cfg: NormalizedR2Config;
+                try {
+                  cfg = validateR2ConfigInput((args ?? {}) as any);
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? 'invalid r2 config', 'INVALID_R2_CONFIG');
+                }
+                const doc = await load().catch(() => ({ domains: {} as any }));
+                const stored = ((doc.domains?.sync as Record<string, unknown> | undefined)?.r2 ?? {}) as Record<string, unknown>;
+                const merged: Record<string, unknown> = { ...stored };
+                const put = (k: string, v: string) => {
+                  if (v) merged[k] = v;
+                  else delete merged[k];
+                };
+                put('provider', cfg.provider === 'aws' ? 'aws' : '');
+                put('accountId', cfg.accountId);
+                put('endpoint', cfg.endpoint);
+                put('region', cfg.region);
+                merged.bucket = cfg.bucket;
+                merged.prefix = cfg.prefix;
+                await saveDomain('sync', { r2: merged });
+                return okCarrier({ r2: { provider: cfg.provider, endpoint: cfg.endpoint, region: cfg.region, bucket: cfg.bucket, prefix: cfg.prefix } });
+              }
               case 'preview': {
                 const dir = (args && (args as any).direction) === 'push' ? 'push' : 'pull';
                 const r = await svc.preview({ direction: dir });
@@ -421,11 +472,14 @@ export default {
                 try {
                   const bsvc = await makeBackupService();
                   const head = await bsvc.readHeadManifest();
+                  const target = await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any);
                   return okCarrier({
                     configured: true,
-                    source: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).source,
-                    bucket: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).config.bucket,
-                    prefix: (await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any)).config.prefix,
+                    source: target.source,
+                    bucket: target.config.bucket,
+                    prefix: target.config.prefix,
+                    // Non-secret snapshot for the config form (never secret material).
+                    r2: { provider: target.config.provider, endpoint: target.config.endpoint, region: target.config.region, bucket: target.config.bucket, prefix: target.config.prefix },
                     lastManifest: head ? head.key : null,
                     eligible: { md: bsvc.listEligibleFiles().filter((p: string) => p.endsWith('.md')).length, sessions: bsvc.listEligibleFiles().filter((p: string) => p.endsWith('.jsonl.zstd')).length },
                   });

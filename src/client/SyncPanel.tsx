@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useSync, type Bucket } from './use-sync.js'
+import { useBackupTarget } from './use-backup.js'
 import { R2SyncPanel } from './R2SyncPanel.js'
 import { ConfirmDialog } from './confirm-dialog.js'
 import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanSummary } from './ui.js'
@@ -13,51 +14,90 @@ import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanS
  */
 export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)
-  const { connection, checking, busy, error, result, status, remoteHost, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
+  const b = useBackupTarget(props.ctx)
+  const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
+  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
+  const st = b.status
 
   const isConnected = connection?.ok === true
   const isDisconnected = connection?.ok === false
   const canSync = isConnected && !checking && !busy
   const planAgeSecs = preview?.expiresAt ? Math.max(0, Math.round((new Date(preview.expiresAt).getTime() - Date.now()) / 1000)) : 0
 
+  // SSH target form state — prefilled from the saved/env/default target once
+  // it loads; the user edits, Saves, then explicitly Checks. Nothing probes
+  // SSH until Check is pressed and nothing unlocks until it passes.
+  const [hostInput, setHostInput] = React.useState('')
+  React.useEffect(() => {
+    if (hostInput === '' && remoteHost !== '…') setHostInput(remoteHost)
+  }, [remoteHost, hostInput])
+  const handleCheck = React.useCallback(async () => {
+    const host = hostInput.trim()
+    if (!host) return
+    const saved = await s.saveRemoteHost(host)
+    if (!saved.ok) return
+    await s.checkConnection()
+  }, [hostInput, s])
+  const sourceLabel = remoteSource === 'settings' ? 'Saved in settings' : remoteSource === 'env' ? 'From REMOTE_HOST env' : 'Built-in default'
+
+  // Mobile-first progressive disclosure: buckets start collapsed on narrow
+  // screens (<640px) so the summary + actions fit one viewport; desktop and
+  // wider start expanded. jsdom (tests) reports 1024px → expanded.
+  const [collapsed, setCollapsed] = React.useState<Record<Bucket, boolean>>(() => {
+    const narrow = typeof window !== 'undefined' && typeof window.innerWidth === 'number' && window.innerWidth < 640
+    return { localOnly: narrow, remoteOnly: narrow }
+  })
+
   const renderBucket = (bucket: Bucket, heading: string, empty: string) => {
     const page = pages[bucket]
     const icon = bucket === 'localOnly' ? 'upload' : 'download'
+    const open = !collapsed[bucket]
     return (
-      <section data-sync-dcol="" data-bucket={bucket} aria-label={heading}>
+      <section data-sync-dcol="" data-bucket={bucket} data-collapsed={String(!open)} aria-label={heading}>
         <header data-sync-dcol-head="">
-          <span data-sync-dcol-title="">
-            <Icon name={icon} />
-            {heading}
-          </span>
-          <span data-sync-dcol-count="">
-            {page.files.length}/{page.total}
-          </span>
+          <button
+            type="button"
+            data-sync-dcol-toggle=""
+            aria-expanded={open}
+            aria-label={`${open ? 'Collapse' : 'Expand'} ${heading}`}
+            onClick={() => setCollapsed((prev) => ({ ...prev, [bucket]: !prev[bucket] }))}
+          >
+            <span data-sync-dcol-title="">
+              <Icon name={open ? 'chevron-down' : 'chevron-right'} />
+              <Icon name={icon} />
+              {heading}
+            </span>
+            <span data-sync-dcol-count="">
+              {page.files.length}/{page.total}
+            </span>
+          </button>
         </header>
-        {isDisconnected ? (
-          <div data-sync-empty="">Cannot check remote — SSH to {connection!.host} is not connected.</div>
-        ) : page.files.length === 0 && !page.loaded ? (
-          <div data-sync-loading="">Checking {heading.toLowerCase()}…</div>
-        ) : page.files.length === 0 && !checking ? (
-          <div data-sync-empty="">{empty}</div>
-        ) : (
-          page.files.map((p: string) => {
-            const f = formatFile(p)
-            return (
-              <div key={p} data-sync-file="" title={p}>
-                <span data-sync-file-icon="" style={{ color: 'var(--dsw-alias-label-tertiary)' }}>
-                  <Icon name={f.icon} />
-                </span>
-                <span data-sync-file-main="">
-                  <span data-sync-file-title="">{f.title}</span>
-                  <span data-sync-file-path="">{f.path}</span>
-                </span>
-                <span data-sync-file-meta="">{f.meta}</span>
-              </div>
-            )
-          })
-        )}
-        {page.next != null ? (
+        {open ? (
+          isDisconnected ? (
+            <div data-sync-empty="">Cannot check remote — SSH to {connection!.host} is not connected.</div>
+          ) : page.files.length === 0 && !page.loaded ? (
+            <div data-sync-loading="">Checking {heading.toLowerCase()}…</div>
+          ) : page.files.length === 0 && !checking ? (
+            <div data-sync-empty="">{empty}</div>
+          ) : (
+            page.files.map((p: string) => {
+              const f = formatFile(p)
+              return (
+                <div key={p} data-sync-file="" title={p}>
+                  <span data-sync-file-icon="" style={{ color: 'var(--dsw-alias-label-tertiary)' }}>
+                    <Icon name={f.icon} />
+                  </span>
+                  <span data-sync-file-main="">
+                    <span data-sync-file-title="">{f.title}</span>
+                    <span data-sync-file-path="">{f.path}</span>
+                  </span>
+                  <span data-sync-file-meta="">{f.meta}</span>
+                </div>
+              )
+            })
+          )
+        ) : null}
+        {open && page.next != null ? (
           <footer data-sync-dcol-foot="">
             <Button size="sm" variant="ghost" onClick={() => void s.loadPage(bucket, page.next!)} aria-label={`Show more ${heading}`}>
               Show more
@@ -68,23 +108,56 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     )
   }
 
+  // House pattern: ONE header (badge + title + live status) above the tabs.
+  // The status line follows the active tab; per-tab headers were removed.
+  const headerStatus =
+    tab === 'remote'
+      ? checking
+        ? 'Checking connection…'
+        : isConnected
+          ? `${connection!.host} · ${humanSummary(status)}`
+          : isDisconnected
+            ? `Cannot reach ${connection!.host}`
+            : connection === null
+              ? 'Not checked yet — configure SSH and check'
+              : humanSummary(status)
+      : b.checking
+        ? 'Checking backup configuration…'
+        : st?.configured
+          ? `Backup ${st.prefix}`
+          : 'Not configured'
+
   const renderRemote = () => (
     <div data-sync-root="" aria-busy={busy || checking}>
-      {/* Header — shared Maestro badge + title + live status line (same as Maestro Jobs) */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
-        <MaestroLogo />
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }}>Maestro Sync</div>
-          <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>
-            {checking ? 'Checking connection…' : isConnected ? `${connection!.host} · ${humanSummary(status)}` : isDisconnected ? `Cannot reach ${connection!.host}` : humanSummary(status)}
-          </span>
+      {/* SSH configuration — the user fills the target, Saves, then explicitly
+          Checks. Nothing below unlocks until the check passes. */}
+      <div data-sync-ssh="">
+        <label data-sync-ssh-label="" htmlFor="sync-ssh-host">SSH target</label>
+        <input
+          id="sync-ssh-host"
+          data-sync-ssh-input=""
+          data-testid="sync-ssh-host"
+          value={hostInput}
+          onChange={(e) => setHostInput(e.target.value)}
+          placeholder="user@host"
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          disabled={checking || busy}
+          aria-describedby="sync-ssh-src"
+        />
+        <div data-sync-ssh-row="">
+          <Button variant="outline" data-testid="sync-save-host" disabled={checking || busy || hostInput.trim().length === 0} onClick={() => void s.saveRemoteHost(hostInput.trim())}>
+            Save
+          </Button>
+          <Button variant="primary" data-testid="sync-check-connection" disabled={checking || busy || hostInput.trim().length === 0} busy={checking} onClick={() => void handleCheck()}>
+            {checking ? 'Checking…' : 'Check connection'}
+          </Button>
         </div>
-        <Button variant="ghost" size="sm" icon="refresh" busy={checking} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', marginTop: 2 }}>
-          {checking ? 'Checking' : 'Refresh'}
-        </Button>
+        <span id="sync-ssh-src" data-sync-ssh-src="">{sourceLabel}</span>
       </div>
 
-      {/* Connection banner */}
+      {/* Connection banner (Refresh lives here so the header stays badge+title+status) */}
       <div data-sync-conn="" data-state={isDisconnected ? 'bad' : checking ? 'checking' : 'ok'} data-testid="sync-connection">
         <span data-sync-conn-dot="" />
         <span data-sync-conn-main="">
@@ -104,12 +177,17 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
               <span data-sync-conn-desc="">{connection!.error ? String(connection!.error).slice(0, 220) : 'SSH failed. Check that the host is reachable and your key is loaded.'}</span>
             </>
           ) : (
-            <span data-sync-conn-title="">Checking connection…</span>
+            <span data-sync-conn-title="">Not checked yet — configure SSH above, then Check connection.</span>
           )}
         </span>
+        <Button variant="ghost" size="sm" icon="refresh" busy={checking} disabled={!isConnected} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', flex: 'none', alignSelf: 'center' }}>
+          {checking ? 'Checking' : 'Refresh'}
+        </Button>
       </div>
 
-      {/* Identity fields — host + last sync */}
+      {isConnected ? (
+        <>
+          {/* Identity fields — host + last sync */}
       <div data-sync-fields="">
         <div data-sync-field="">
           <span data-sync-field-label="">Remote host</span>
@@ -146,8 +224,8 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
         />
       </div>
 
-      {/* Primary actions */}
-      <div data-sync-actions="">
+      {/* Primary actions — sticky bottom bar on mobile (thumb reach) */}
+      <div data-sync-actions="" data-sync-actions-bar="">
         <Button variant="outline" icon="download" disabled={!canSync} data-testid="sync-preview-pull" onClick={() => void s.handlePreview('pull')}>
           {busy ? 'Working…' : 'Preview Pull'}
         </Button>
@@ -186,6 +264,30 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           </span>
         </div>
       ) : null}
+      {/* Results (announced) — inside the gate: only a passed check produces one */}
+
+      {/* File list sections — everything stays inside Settings */}
+      <div data-sync-filetables="">
+        {renderBucket('remoteOnly', 'Coming from the other machine', 'Nothing to pull — the other machine has no eligible files here.')}
+        {renderBucket('localOnly', 'Ready to send', 'Nothing to push — this machine has no eligible files here.')}
+      </div>
+        </>
+      ) : (
+        <div data-sync-notice="" data-tone="ok" role="status">
+          <span data-sync-notice-icon="">
+            <Icon name={isDisconnected ? 'alert' : 'clock'} />
+          </span>
+          <span data-sync-notice-main="">
+            <span data-sync-notice-title="">{isDisconnected ? 'Connection failed' : 'Preview and file lists are locked'}</span>
+            <span data-sync-notice-desc="">
+              {isDisconnected
+                ? 'Fix the SSH target above and check again.'
+                : 'Configure the SSH target above, then Check connection — everything below unlocks after a successful check.'}
+            </span>
+          </span>
+        </div>
+      )}
+
       {error ? (
         <div data-sync-notice="" data-tone="bad" role="alert">
           <span data-sync-notice-icon="">
@@ -197,12 +299,6 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           </span>
         </div>
       ) : null}
-
-      {/* File list sections — everything stays inside Settings */}
-      <div data-sync-filetables="">
-        {renderBucket('remoteOnly', 'Coming from the other machine', 'Nothing to pull — the other machine has no eligible files here.')}
-        {renderBucket('localOnly', 'Ready to send', 'Nothing to push — this machine has no eligible files here.')}
-      </div>
 
       {/* Confirmation dialog — the only place apply exists */}
       {confirmOpen && preview ? (
@@ -225,9 +321,18 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     </div>
   )
 
-  const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
   return (
     <div data-sync-shell="">
+      {/* Header — shared Maestro badge + title + live status line (same as Maestro Jobs) */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
+        <MaestroLogo />
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }}>Maestro Sync</div>
+          <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>
+            {headerStatus}
+          </span>
+        </div>
+      </div>
       <div data-sync-tabs="" role="tablist" aria-label="Maestro Sync modes">
         <button data-testid="sync-tab-remote" role="tab" aria-selected={tab === 'remote'} data-sync-tab="" onClick={() => setTab('remote')}>
           Remote Sync
@@ -236,7 +341,7 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           R2 Sync
         </button>
       </div>
-      {tab === 'remote' ? renderRemote() : <R2SyncPanel ctx={props.ctx} />}
+      {tab === 'remote' ? renderRemote() : <R2SyncPanel b={b} />}
     </div>
   )
 }

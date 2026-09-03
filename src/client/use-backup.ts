@@ -10,6 +10,8 @@ export interface BackupStatusView {
   source: 'env' | 'file' | 'none';
   bucket: string;
   prefix: string;
+  /** Non-secret snapshot for the config form (never secret material). */
+  r2?: { provider: string; endpoint: string; region: string; bucket: string; prefix: string };
   lastManifest: string | null;
   eligible: { md: number; sessions: number };
 }
@@ -155,6 +157,28 @@ export function useBackupTarget(ctx: any) {
     setGcReport(null);
   }, []);
 
+  /** Persist the non-secret backup target, then reload status. */
+  const saveR2Config = React.useCallback(
+    async (fields: { provider: string; accountId: string; endpoint: string; region: string; bucket: string; prefix: string }): Promise<{ ok: boolean; error?: string }> => {
+      setError('');
+      try {
+        const res = await call('saveR2Config', fields);
+        if (!res.ok) {
+          const msg = res.error?.message ?? 'save failed';
+          setError(msg);
+          return { ok: false, error: msg };
+        }
+        await loadStatus();
+        return { ok: true };
+      } catch (e: any) {
+        const msg = e?.message ?? String(e);
+        setError(msg);
+        return { ok: false, error: msg };
+      }
+    },
+    [call, loadStatus],
+  );
+
   React.useEffect(() => {
     void loadStatus();
   }, [loadStatus]);
@@ -171,6 +195,7 @@ export function useBackupTarget(ctx: any) {
     confirmOpen,
     canBackup: configured && !checking && !busy,
     loadStatus,
+    saveR2Config,
     previewBackup,
     applyBackup,
     previewRestore,

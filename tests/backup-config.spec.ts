@@ -1,6 +1,6 @@
 // tests/backup-config.spec.ts — backup target config + secret resolution (redacted).
 import { describe, it, expect } from 'vitest';
-import { describeSecretSource, resolveBackupTarget, type BackupSecrets } from '../src/host/backup-config.js';
+import { describeSecretSource, resolveBackupTarget, validateR2ConfigInput, type BackupSecrets } from '../src/host/backup-config.js';
 
 describe('backup config', () => {
   it('describeSecretSource never leaks values: env|file|none', () => {
@@ -57,5 +57,24 @@ describe('backup config', () => {
     expect(status).not.toContain('ak');
     expect(status).not.toContain('sk');
     expect(status).not.toContain('secret');
+  });
+
+  it('validateR2ConfigInput normalizes a full R2 form (prefix slash appended)', () => {
+    const v = validateR2ConfigInput({ provider: 'r2', accountId: 'a'.repeat(32), endpoint: '', region: 'auto', bucket: 'maestro-backup', prefix: 'v1/hosts/abc' });
+    expect(v).toEqual({ provider: 'r2', accountId: 'a'.repeat(32), endpoint: '', region: 'auto', bucket: 'maestro-backup', prefix: 'v1/hosts/abc/' });
+  });
+
+  it('validateR2ConfigInput rejects bad provider/bucket/endpoint/region/prefix', () => {
+    expect(() => validateR2ConfigInput({ provider: 'gcs', bucket: 'b', prefix: 'p/' })).toThrow(/invalid provider/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'UPPER', prefix: 'p/' })).toThrow(/invalid bucket/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'b', prefix: 'p/' })).toThrow(/invalid bucket/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: 'p/', endpoint: 'http://plain' })).toThrow(/invalid endpoint/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: 'p/', endpoint: 'https://x; rm' })).toThrow(/invalid endpoint/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: 'p/', region: 'us east!' })).toThrow(/invalid region/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: '/abs' })).toThrow(/invalid prefix/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: '../up/' })).toThrow(/invalid prefix/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', bucket: 'maestro-backup', prefix: '' })).toThrow(/prefix is required/);
+    expect(() => validateR2ConfigInput({ provider: 'aws', accountId: 'a'.repeat(32), bucket: 'maestro-backup', prefix: 'p/' })).toThrow(/only meaningful for provider r2/);
+    expect(() => validateR2ConfigInput({ provider: 'r2', accountId: 'short', bucket: 'maestro-backup', prefix: 'p/' })).toThrow(/invalid accountId/);
   });
 });
