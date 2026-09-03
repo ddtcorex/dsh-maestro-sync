@@ -5,12 +5,12 @@
 import * as React from 'react'
 import { useBackupTarget } from './use-backup.js'
 import { ConfirmDialog } from './confirm-dialog.js'
-import { Button, MaestroLogo, StatTile, Badge } from './ui.js'
+import { Button, StatTile, Badge } from './ui.js'
 
 const sourceLabel = (s: string | undefined) => (s === 'env' ? 'Env' : s === 'file' ? 'Private file' : 'Not configured')
 
-export function R2SyncPanel(props: { ctx: any }): React.ReactElement {
-  const b = useBackupTarget(props.ctx)
+export function R2SyncPanel(props: { b: ReturnType<typeof useBackupTarget> }): React.ReactElement {
+  const b = props.b
   const st = b.status
   // Mobile-first: only the primary backup action stays visible; restore/GC
   // live behind a More menu so the row never overflows 360px viewports.
@@ -88,15 +88,6 @@ export function R2SyncPanel(props: { ctx: any }): React.ReactElement {
 
   return (
     <div data-sync-root="" data-r2-root="" aria-busy={b.busy}>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
-        <MaestroLogo />
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }}>R2 Sync</div>
-          <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>
-            {b.checking ? 'Checking backup configuration…' : st?.configured ? `Backup ${st.prefix}` : 'Not configured'}
-          </span>
-        </div>
-      </div>
       {banner()}
       <div data-r2-stats="">
         <StatTile icon="server" value={String(st?.eligible?.md ?? 0)} label="memories" />

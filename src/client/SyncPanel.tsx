@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useSync, type Bucket } from './use-sync.js'
+import { useBackupTarget } from './use-backup.js'
 import { R2SyncPanel } from './R2SyncPanel.js'
 import { ConfirmDialog } from './confirm-dialog.js'
 import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanSummary } from './ui.js'
@@ -13,7 +14,10 @@ import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanS
  */
 export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)
+  const b = useBackupTarget(props.ctx)
+  const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
   const { connection, checking, busy, error, result, status, remoteHost, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
+  const st = b.status
 
   const isConnected = connection?.ok === true
   const isDisconnected = connection?.ok === false
@@ -88,23 +92,26 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     )
   }
 
+  // House pattern: ONE header (badge + title + live status) above the tabs.
+  // The status line follows the active tab; per-tab headers were removed.
+  const headerStatus =
+    tab === 'remote'
+      ? checking
+        ? 'Checking connection…'
+        : isConnected
+          ? `${connection!.host} · ${humanSummary(status)}`
+          : isDisconnected
+            ? `Cannot reach ${connection!.host}`
+            : humanSummary(status)
+      : b.checking
+        ? 'Checking backup configuration…'
+        : st?.configured
+          ? `Backup ${st.prefix}`
+          : 'Not configured'
+
   const renderRemote = () => (
     <div data-sync-root="" aria-busy={busy || checking}>
-      {/* Header — shared Maestro badge + title + live status line (same as Maestro Jobs) */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
-        <MaestroLogo />
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }}>Maestro Sync</div>
-          <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>
-            {checking ? 'Checking connection…' : isConnected ? `${connection!.host} · ${humanSummary(status)}` : isDisconnected ? `Cannot reach ${connection!.host}` : humanSummary(status)}
-          </span>
-        </div>
-        <Button variant="ghost" size="sm" icon="refresh" busy={checking} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', marginTop: 2 }}>
-          {checking ? 'Checking' : 'Refresh'}
-        </Button>
-      </div>
-
-      {/* Connection banner */}
+      {/* Connection banner (Refresh lives here so the header stays badge+title+status) */}
       <div data-sync-conn="" data-state={isDisconnected ? 'bad' : checking ? 'checking' : 'ok'} data-testid="sync-connection">
         <span data-sync-conn-dot="" />
         <span data-sync-conn-main="">
@@ -127,6 +134,9 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
             <span data-sync-conn-title="">Checking connection…</span>
           )}
         </span>
+        <Button variant="ghost" size="sm" icon="refresh" busy={checking} onClick={() => void s.loadStatus()} aria-label="Refresh connection status" style={{ marginLeft: 'auto', flex: 'none', alignSelf: 'center' }}>
+          {checking ? 'Checking' : 'Refresh'}
+        </Button>
       </div>
 
       {/* Identity fields — host + last sync */}
@@ -245,9 +255,18 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     </div>
   )
 
-  const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
   return (
     <div data-sync-shell="">
+      {/* Header — shared Maestro badge + title + live status line (same as Maestro Jobs) */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '2px 2px 4px' }}>
+        <MaestroLogo />
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 2 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, lineHeight: '22px', color: 'var(--dsw-alias-label-primary)' }}>Maestro Sync</div>
+          <span style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>
+            {headerStatus}
+          </span>
+        </div>
+      </div>
       <div data-sync-tabs="" role="tablist" aria-label="Maestro Sync modes">
         <button data-testid="sync-tab-remote" role="tab" aria-selected={tab === 'remote'} data-sync-tab="" onClick={() => setTab('remote')}>
           Remote Sync
@@ -256,7 +275,7 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           R2 Sync
         </button>
       </div>
-      {tab === 'remote' ? renderRemote() : <R2SyncPanel ctx={props.ctx} />}
+      {tab === 'remote' ? renderRemote() : <R2SyncPanel b={b} />}
     </div>
   )
 }
