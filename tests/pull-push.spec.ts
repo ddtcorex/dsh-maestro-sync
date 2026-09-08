@@ -9,7 +9,7 @@ import { SyncService } from '../src/host/sync-service.js';
 import { clearPreviews } from '../src/host/sync-plan.js';
 import { createFakeRemote, makeTempRoots } from './helpers/fake-transport.js';
 
-const MD = 'memories/daily/2026-08-29.md';
+const MD = 'dsh-maestro-memory/daily/2026-08-29.md';
 
 const stubRunner: any = {
   run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })),
@@ -21,7 +21,7 @@ describe('legacy pull/push compatibility', () => {
   it('pull() is preview-only even when dryRun is omitted — no local write', async () => {
     const { localRoot, cleanup } = makeTempRoots('legacy-pull-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       const localPath = path.join(localRoot, MD);
       fs.writeFileSync(localPath, 'a\n§\nlocal1\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nremote1\n§\nremote2\n')]]));
@@ -56,7 +56,7 @@ describe('legacy pull/push compatibility', () => {
   it('push() is preview-only even when dryRun is omitted — nothing is uploaded or committed', async () => {
     const { localRoot, cleanup } = makeTempRoots('legacy-push-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nentry-local\n');
       const remoteBytes = Buffer.from('a\n§\nentry-remote\n');
       const fake = createFakeRemote(new Map([[MD, remoteBytes]]));

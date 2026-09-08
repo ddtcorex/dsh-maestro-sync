@@ -30,7 +30,7 @@ export function buildRemoteManifestScript(dshRoot: string): string {
   // inside a `do...done` one-liner break bash's parser (verified 2026-09-02).
   const cache = remoteCachePath(dshRoot);
   return [
-    `find ${dshRoot}/memories ${dshRoot}/sessions`,
+    `find ${dshRoot}/dsh-maestro-memory ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
     `| xargs -0 stat --printf='%i %s %.Y %.Z\\t%n\\n' 2>/dev/null`,
     `| awk -F '\\t' -v root='${dshRoot}/' -v cachefile='${cache}' 'BEGIN{while((getline line < cachefile) > 0){if(line=="")continue; m=split(line,a,"\\t"); if(m>=6){c[a[1]]=(a[2]" "a[3]" "a[4]" "a[5])"\\t"a[6]"\\t"a[3]"\\t"a[4];}} close(cachefile);} {st=$1; rel=$2; sub(root,"",rel); if(rel in c){split(c[rel],e,"\\t"); if(e[1]==st){print "H\\t"rel"\\t"e[2]"\\t"e[3]"\\t"e[4]; next;}} print "M\\t"rel"\\t"st;}'`,

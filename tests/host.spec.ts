@@ -70,7 +70,7 @@ describe('host', () => {
   });
 
   it('status RPC pages with cursor and stays bounded', async () => {
-    const files = Array.from({ length: 25 }, (_, i) => `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`);
+    const files = Array.from({ length: 25 }, (_, i) => `dsh-maestro-memory/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`);
     vi.spyOn(SyncService.prototype, 'statusPage').mockResolvedValue({
       total: 25,
       offset: 0,

@@ -1,5 +1,5 @@
 /**
- * Core delimited merge for daily/projects/global memories.
+ * Core delimited merge for daily/projects/global memory.
  * Ported from packages/dsh-maestro-memory/src/host/storage/atomic-store.ts
  * with header-aware parsing for DSH sync.
  */

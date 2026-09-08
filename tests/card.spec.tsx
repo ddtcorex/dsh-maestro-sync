@@ -31,7 +31,7 @@ function statusRpc() {
     if (method === 'status') {
       const bucketFiles =
         args?.bucket === 'localOnly'
-          ? ['memories/daily/2026-08-29.md', 'memories/MEMORY.md']
+          ? ['dsh-maestro-memory/daily/2026-08-29.md', 'dsh-maestro-memory/MEMORY.md']
           : ['sessions/abc123/xyz.jsonl.zstd'];
       return carrier({ ok: true, total: bucketFiles.length, offset: args?.cursor ?? 0, limit: 10, files: bucketFiles, nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
     }
@@ -46,7 +46,7 @@ function statusRpc() {
           previewId: PREVIEW_ID,
           revision: 'rev1',
           expiresAt: new Date(Date.now() + 60000).toISOString(),
-          actions: [{ path: 'memories/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
+          actions: [{ path: 'dsh-maestro-memory/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
           summary,
           connection: { ok: true, host: 'sync-host' },
           remoteHost: 'sync-host',
@@ -79,10 +79,10 @@ describe('SyncPanel file lists', () => {
       }
       if (method === 'status') {
         if (args?.bucket === 'localOnly') {
-          return carrier({ ok: true, total: 2, offset: args?.cursor ?? 0, limit: 10, files: ['memories/daily/2026-08-29.md', 'memories/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+          return carrier({ ok: true, total: 2, offset: args?.cursor ?? 0, limit: 10, files: ['dsh-maestro-memory/daily/2026-08-29.md', 'dsh-maestro-memory/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
         }
         const start = args?.cursor ?? 0;
-        const files = Array.from({ length: 12 }, (_, i) => `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`).slice(start, start + 10);
+        const files = Array.from({ length: 12 }, (_, i) => `dsh-maestro-memory/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`).slice(start, start + 10);
         return carrier({ ok: true, total: 12, offset: start, limit: 10, files, nextCursor: start + 10 < 12 ? start + 10 : null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       }
       const cf = checkFlowBranches(method);
@@ -140,7 +140,7 @@ describe('SyncPanel file lists', () => {
             previewId: PREVIEW_ID,
             revision: 'rev1',
             expiresAt: new Date(Date.now() + 60000).toISOString(),
-            actions: [{ path: 'memories/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
+            actions: [{ path: 'dsh-maestro-memory/MEMORY.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
             summary,
             sessionCounts: { added: 5, updated: 12, deleted: 2, identical: 4 },
             connection: { ok: true, host: 'sync-host' },

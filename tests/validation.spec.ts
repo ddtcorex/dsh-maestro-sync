@@ -34,17 +34,34 @@ describe('validation', () => {
 
   describe('ELIGIBLE regex', () => {
     it('matches eligible paths', () => {
-      expect(ELIGIBLE_RE.test('memories/daily/2026-08-29.md')).toBe(true);
-      expect(ELIGIBLE_RE.test('memories/SUGGESTIONS.jsonl')).toBe(true);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/daily/2026-08-29.md')).toBe(true);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/SUGGESTIONS.jsonl')).toBe(true);
       expect(ELIGIBLE_RE.test('sessions/abc123/def456/session.jsonl.zstd')).toBe(true);
-      expect(ELIGIBLE_RE.test('memories/projects/foo.md')).toBe(true);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/projects/foo.md')).toBe(true);
     });
     it('rejects ineligible', () => {
       expect(ELIGIBLE_RE.test('../x')).toBe(false);
-      expect(ELIGIBLE_RE.test('memories/a\u0000.md')).toBe(false);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/a\u0000.md')).toBe(false);
       expect(ELIGIBLE_RE.test('profiles/x')).toBe(false);
-      expect(ELIGIBLE_RE.test('memories/a.bak.md')).toBe(false);
-      expect(ELIGIBLE_RE.test('memories/foo.bak.bar.md')).toBe(false);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/a.bak.md')).toBe(false);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/foo.bak.bar.md')).toBe(false);
+    });
+  });
+
+  describe('renamed memory root (dsh-maestro-memory)', () => {
+    it('matches eligible paths under the new root', () => {
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/daily/2026-09-08.md')).toBe(true);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/SUGGESTIONS.jsonl')).toBe(true);
+      expect(ELIGIBLE_RE.test('dsh-maestro-memory/projects/foo.md')).toBe(true);
+    });
+    it('normalizes paths under the new root', () => {
+      expect(normalizeEligiblePath('dsh-maestro-memory/daily/2026-09-08.md')).toBe(
+        'dsh-maestro-memory/daily/2026-09-08.md',
+      );
+    });
+    it('rejects the legacy memories/ root', () => {
+      expect(ELIGIBLE_RE.test('memories/daily/2026-09-08.md')).toBe(false);
+      expect(() => normalizeEligiblePath('memories/daily/2026-09-08.md')).toThrow();
     });
   });
 
@@ -82,29 +99,29 @@ describe('validation', () => {
   });
 
   describe('normalizeEligiblePath', () => {
-    it.each(['../x', 'memories/a\u0000.md', 'profiles/x'])('rejects ineligible path %s', (p) => {
+    it.each(['../x', 'dsh-maestro-memory/a\u0000.md', 'profiles/x'])('rejects ineligible path %s', (p) => {
       expect(() => normalizeEligiblePath(p)).toThrow();
     });
 
     it('accepts eligible memory and session paths', () => {
-      expect(normalizeEligiblePath('memories/daily/2026-08-29.md')).toBe('memories/daily/2026-08-29.md');
-      expect(normalizeEligiblePath('memories/SUGGESTIONS.jsonl')).toBe('memories/SUGGESTIONS.jsonl');
+      expect(normalizeEligiblePath('dsh-maestro-memory/daily/2026-08-29.md')).toBe('dsh-maestro-memory/daily/2026-08-29.md');
+      expect(normalizeEligiblePath('dsh-maestro-memory/SUGGESTIONS.jsonl')).toBe('dsh-maestro-memory/SUGGESTIONS.jsonl');
       expect(normalizeEligiblePath('sessions/abc123/def456/session.jsonl.zstd')).toBe(
         'sessions/abc123/def456/session.jsonl.zstd',
       );
     });
 
     it('rejects bak files, absolute, and session non-canonical', () => {
-      expect(() => normalizeEligiblePath('memories/foo.bak.md')).toThrow();
-      expect(() => normalizeEligiblePath('memories/a.bak./b.md')).toThrow();
-      expect(() => normalizeEligiblePath('/memories/a.md')).toThrow();
+      expect(() => normalizeEligiblePath('dsh-maestro-memory/foo.bak.md')).toThrow();
+      expect(() => normalizeEligiblePath('dsh-maestro-memory/a.bak./b.md')).toThrow();
+      expect(() => normalizeEligiblePath('/dsh-maestro-memory/a.md')).toThrow();
       expect(() => normalizeEligiblePath('sessions/a/b/bad.jsonl')).toThrow();
-      expect(() => normalizeEligiblePath('memories/a.txt')).toThrow();
+      expect(() => normalizeEligiblePath('dsh-maestro-memory/a.txt')).toThrow();
     });
 
     it('rejects control chars and traversal', () => {
-      expect(() => normalizeEligiblePath('memories/a\n.md')).toThrow();
-      expect(() => normalizeEligiblePath('memories/../a.md')).toThrow();
+      expect(() => normalizeEligiblePath('dsh-maestro-memory/a\n.md')).toThrow();
+      expect(() => normalizeEligiblePath('dsh-maestro-memory/../a.md')).toThrow();
       expect(() => normalizeEligiblePath('')).toThrow();
     });
   });

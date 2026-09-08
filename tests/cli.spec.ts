@@ -23,14 +23,14 @@ const fakePreview = () => ({
   previewId: 'p'.repeat(32),
   revision: 'rev1',
   expiresAt: new Date(Date.now() + 60000).toISOString(),
-  actions: [{ path: 'memories/daily/2026-08-29.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
+  actions: [{ path: 'dsh-maestro-memory/daily/2026-08-29.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' }],
   summary: { copied: 0, merged: 1, skipped: 0, conflicts: 0, added: 1 },
   connection: { ok: true, host: 'sync-host' },
   remoteHost: 'sync-host',
 });
 
 function makeService(applyResult?: any) {
-  const apply = vi.fn(async (req: any) => applyResult ?? { ok: true, revision: 'rev1', summary: fakePreview().summary, committed: ['memories/daily/2026-08-29.md'], failures: [] });
+  const apply = vi.fn(async (req: any) => applyResult ?? { ok: true, revision: 'rev1', summary: fakePreview().summary, committed: ['dsh-maestro-memory/daily/2026-08-29.md'], failures: [] });
   const preview = vi.fn(async () => fakePreview());
   return {
     factory: async () => ({ preview, apply }) as any,
@@ -80,12 +80,12 @@ describe('cli', () => {
     expect(m.apply).toHaveBeenCalledWith({ previewId: 'p'.repeat(32), direction: 'pull', confirm: true });
     const json = JSON.parse(c.stdout().trim().split('\n').pop()!);
     expect(json.ok).toBe(true);
-    expect(json.committed).toContain('memories/daily/2026-08-29.md');
+    expect(json.committed).toContain('dsh-maestro-memory/daily/2026-08-29.md');
   });
 
   it('an apply partial failure exits non-zero and prints ok:false with the journal', async () => {
     const c = capture();
-    const m = makeService({ ok: false, revision: 'rev1', summary: fakePreview().summary, committed: [], failures: [{ phase: 'publish', code: 'COMMIT_FAILED', detail: 'boom', path: 'memories/daily/2026-08-29.md' }] });
+    const m = makeService({ ok: false, revision: 'rev1', summary: fakePreview().summary, committed: [], failures: [{ phase: 'publish', code: 'COMMIT_FAILED', detail: 'boom', path: 'dsh-maestro-memory/daily/2026-08-29.md' }] });
     const code = await runCli(['--push', '--apply', '--preview-id', 'p'.repeat(32), '--confirm'], { stdout: c.out, stderr: c.err, makeService: m.factory });
     expect(code).toBe(1);
     const json = JSON.parse(c.stdout().trim().split('\n').pop()!);

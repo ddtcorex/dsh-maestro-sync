@@ -14,7 +14,7 @@ import { clearPreviews } from '../src/host/sync-plan.js';
 import { createFakeRemote, sha256, makeTempRoots } from './helpers/fake-transport.js';
 import { makeSessionBuffer, sessionHeader, ZSTD_MAGIC } from './helpers/zstd.js';
 
-const MD = 'memories/daily/2026-08-29.md';
+const MD = 'dsh-maestro-memory/daily/2026-08-29.md';
 const SESSION = 'sessions/abc123/def456/session.jsonl.zstd';
 
 function makeFsProbe(): { fs: any; backupCreated: boolean; fsyncCalled: boolean; renameCalled: boolean } {
@@ -56,7 +56,7 @@ describe('apply', () => {
   it('applies against the freshest inventory: a change between preview and apply is merged, not rejected', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-fresh-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       const localPath = path.join(localRoot, MD);
       fs.writeFileSync(localPath, 'a\n§\nlocal1\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nremote1\n')]]));
@@ -89,7 +89,7 @@ describe('apply', () => {
   it('pull copy publishes through atomic local write, never a direct rsync into the live root', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-copy-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       const fake = createFakeRemote(
         new Map([
           [MD, Buffer.from('a\n§\nremote-only-day\n')],
@@ -130,7 +130,7 @@ describe('apply', () => {
   it('push merge uploads and commit-CAS-publishes with the expected target SHA-256', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-push-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       const localPath = path.join(localRoot, MD);
       fs.writeFileSync(localPath, 'a\n§\nentry-local\n');
       const remoteBytes = Buffer.from('a\n§\nentry-remote\n');
@@ -168,7 +168,7 @@ describe('apply', () => {
   it('push commit failure returns ok:false with committed/uncommitted journal', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-fail-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nentry-local\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nentry-remote\n')]]));
       fake.failNextCommitOnce = true;
@@ -234,13 +234,13 @@ describe('apply', () => {
   it('apply never re-reads an unchanged file: content is loaded lazily only for plan targets', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-lazy-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories'));
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory'));
       const shared = Buffer.from('identical-bytes');
-      fs.writeFileSync(path.join(localRoot, 'memories/shared.md'), shared);
-      fs.writeFileSync(path.join(localRoot, 'memories/pullme.md'), 'keep');
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory/shared.md'), shared);
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory/pullme.md'), 'keep');
       const fake = createFakeRemote(new Map([
-        ['memories/shared.md', shared],
-        ['memories/pullme.md', Buffer.from('remote-new')],
+        ['dsh-maestro-memory/shared.md', shared],
+        ['dsh-maestro-memory/pullme.md', Buffer.from('remote-new')],
       ]));
       let sharedReads = 0;
       const fsProbe: any = new Proxy(fs, {
@@ -267,7 +267,7 @@ describe('apply', () => {
       const readsAfterPreview = sharedReads;
       const applied = await svc.apply({ previewId: preview.previewId, direction: 'pull', confirm: true });
       expect(applied.ok).toBe(true);
-      expect(applied.committed).toContain('memories/pullme.md');
+      expect(applied.committed).toContain('dsh-maestro-memory/pullme.md');
       // shared.md is byte-identical → skip → its content is never re-read on apply
       expect(sharedReads).toBe(readsAfterPreview);
     } finally {
@@ -278,8 +278,8 @@ describe('apply', () => {
   it('push apply refreshes the remote fingerprint cache after a successful commit; preview never warms', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-warm-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories'));
-      fs.writeFileSync(path.join(localRoot, 'memories/a.md'), 'push-me');
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory/a.md'), 'push-me');
       const fake = createFakeRemote();
       const svc = new SyncService({ localDsh: localRoot, remote: 'sync-host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
       const preview = await svc.preview({ direction: 'push' });
@@ -288,7 +288,7 @@ describe('apply', () => {
       expect((fake.calls as any).warmCache ?? 0).toBeGreaterThanOrEqual(1);
 
       // preview (read-only) must never trigger warmCache
-      const fake2 = createFakeRemote(new Map([['memories/b.md', Buffer.from('b')]]));
+      const fake2 = createFakeRemote(new Map([['dsh-maestro-memory/b.md', Buffer.from('b')]]));
       const svc2 = new SyncService({ localDsh: localRoot, remote: 'sync-host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake2.transport as any });
       await svc2.preview({ direction: 'pull' });
       expect((fake2.calls as any).warmCache ?? 0).toBe(0);

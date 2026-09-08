@@ -1,6 +1,6 @@
 # dsh-maestro-sync
 
-Maestro harness sync — merge memories and sessions across machines (publishable)
+Maestro harness sync — merge memory and sessions across machines (publishable)
 
 > DSH Maestro plugin — part of the `dsh-maestro-*` ecosystem (`@ddtcorex/dsh-maestro-sync`).
 
@@ -30,7 +30,7 @@ node lib/cli.js --pull --apply --preview-id <id> --confirm
 - **Stale-guard:** apply re-inventories both machines, recomputes the plan and
   rejects it as `STALE_PREVIEW` if anything changed since the preview — no write
   happens against a stale plan. Apply is single-use per preview id.
-- **Eligible only:** `memories/**/*.md` (no `*.bak.*`), `memories/SUGGESTIONS.jsonl`, `sessions/<hash>/<id>/session.jsonl.zstd`
+- **Eligible only:** `dsh-maestro-memory/**/*.md` (no `*.bak.*`), `dsh-maestro-memory/SUGGESTIONS.jsonl`, `sessions/<hash>/<id>/session.jsonl.zstd`
 - **Transport:** argv-only `spawn`/`rsync --files-from`, no shell interpolation;
   the remote root is a validated absolute path. A `~/.dsh` default is resolved
   to the absolute remote home by the SSH preflight (`printf %s '$HOME'`), never
@@ -64,7 +64,7 @@ material, profiles, supervisor state, storages, tools, skills, logs, caches and
 
 ## R2 Sync — offsite backup (Cloudflare R2; AWS S3 via the same client, UI hidden)
 
-Backup and restore of the eligible data (memories + session logs) to an
+Backup and restore of the eligible data (memory + session logs) to an
 S3-compatible bucket through a dependency-free SigV4 client.
 
 - **Config** (`~/.dsh/maestro/settings.json` → `domains.sync.r2`): `accountId`,

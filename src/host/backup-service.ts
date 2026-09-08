@@ -85,7 +85,7 @@ export class BackupService {
       }
     };
     try {
-      walk(path.join(root, 'memories'));
+      walk(path.join(root, 'dsh-maestro-memory'));
       walk(path.join(root, 'sessions'));
     } catch {}
     return out.sort();

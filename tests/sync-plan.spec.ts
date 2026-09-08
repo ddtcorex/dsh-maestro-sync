@@ -15,21 +15,21 @@ describe('sync-plan', () => {
   beforeEach(() => clearPreviews());
 
   it('marks same-name unequal content as merge and computes the real added count', async () => {
-    const localSnap: FileSnapshot = { path: 'memories/daily/2026-08-29.md', sha256: 'aaa', size: 10, kind: 'memory' };
-    const remoteSnap: FileSnapshot = { path: 'memories/daily/2026-08-29.md', sha256: 'bbb', size: 12, kind: 'memory' };
+    const localSnap: FileSnapshot = { path: 'dsh-maestro-memory/daily/2026-08-29.md', sha256: 'aaa', size: 10, kind: 'memory' };
+    const remoteSnap: FileSnapshot = { path: 'dsh-maestro-memory/daily/2026-08-29.md', sha256: 'bbb', size: 12, kind: 'memory' };
     // local has 'a § foo', remote has 'a § foo § bar' => merge adds 1
-    const localContents = new Map([['memories/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n')]]);
-    const remoteContents = new Map([['memories/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n§\nbar\n')]]);
+    const localContents = new Map([['dsh-maestro-memory/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n')]]);
+    const remoteContents = new Map([['dsh-maestro-memory/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n§\nbar\n')]]);
     const preview = await buildPlan([localSnap], [remoteSnap], 'pull', localContents, remoteContents);
-    expect(preview.actions).toContainEqual(expect.objectContaining({ path: 'memories/daily/2026-08-29.md', action: 'merge', added: 1 }));
+    expect(preview.actions).toContainEqual(expect.objectContaining({ path: 'dsh-maestro-memory/daily/2026-08-29.md', action: 'merge', added: 1 }));
     expect(preview.summary.merged).toBe(1);
     expect(preview.summary.added).toBe(1);
   });
 
   it('skips identical bytes even when mtime differs', async () => {
-    const snap: FileSnapshot = { path: 'memories/a.md', sha256: 'same', size: 5, kind: 'memory' };
+    const snap: FileSnapshot = { path: 'dsh-maestro-memory/a.md', sha256: 'same', size: 5, kind: 'memory' };
     const buf = Buffer.from('hi');
-    const plan = await buildPlan([snap], [snap], 'pull', new Map([['memories/a.md', buf]]), new Map([['memories/a.md', buf]]));
+    const plan = await buildPlan([snap], [snap], 'pull', new Map([['dsh-maestro-memory/a.md', buf]]), new Map([['dsh-maestro-memory/a.md', buf]]));
     expect(plan.summary.skipped).toBe(1);
     expect(plan.actions[0].action).toBe('skip');
     expect(plan.actions[0].reason).toMatch(/identical/);
@@ -56,21 +56,21 @@ describe('sync-plan', () => {
   });
 
   it('dispatches markdown to mergeDelimited, jsonl to exact-line union', async () => {
-    const mdLocal: FileSnapshot = { path: 'memories/daily/2026-08-30.md', sha256: 'l1', size: 5, kind: 'memory' };
-    const mdRemote: FileSnapshot = { path: 'memories/daily/2026-08-30.md', sha256: 'r1', size: 6, kind: 'memory' };
-    const jsonlLocal: FileSnapshot = { path: 'memories/SUGGESTIONS.jsonl', sha256: 'l2', size: 5, kind: 'jsonl' };
-    const jsonlRemote: FileSnapshot = { path: 'memories/SUGGESTIONS.jsonl', sha256: 'r2', size: 6, kind: 'jsonl' };
+    const mdLocal: FileSnapshot = { path: 'dsh-maestro-memory/daily/2026-08-30.md', sha256: 'l1', size: 5, kind: 'memory' };
+    const mdRemote: FileSnapshot = { path: 'dsh-maestro-memory/daily/2026-08-30.md', sha256: 'r1', size: 6, kind: 'memory' };
+    const jsonlLocal: FileSnapshot = { path: 'dsh-maestro-memory/SUGGESTIONS.jsonl', sha256: 'l2', size: 5, kind: 'jsonl' };
+    const jsonlRemote: FileSnapshot = { path: 'dsh-maestro-memory/SUGGESTIONS.jsonl', sha256: 'r2', size: 6, kind: 'jsonl' };
     const localContents = new Map<string, Buffer>([
-      ['memories/daily/2026-08-30.md', Buffer.from('x\n§\ny\n')],
-      ['memories/SUGGESTIONS.jsonl', Buffer.from('{"a":1}\n')],
+      ['dsh-maestro-memory/daily/2026-08-30.md', Buffer.from('x\n§\ny\n')],
+      ['dsh-maestro-memory/SUGGESTIONS.jsonl', Buffer.from('{"a":1}\n')],
     ]);
     const remoteContents = new Map<string, Buffer>([
-      ['memories/daily/2026-08-30.md', Buffer.from('x\n§\ny\n§\nz\n')],
-      ['memories/SUGGESTIONS.jsonl', Buffer.from('{"a":1}\n{"b":2}\n')],
+      ['dsh-maestro-memory/daily/2026-08-30.md', Buffer.from('x\n§\ny\n§\nz\n')],
+      ['dsh-maestro-memory/SUGGESTIONS.jsonl', Buffer.from('{"a":1}\n{"b":2}\n')],
     ]);
     const plan = await buildPlan([mdLocal, jsonlLocal], [mdRemote, jsonlRemote], 'pull', localContents, remoteContents);
-    const mdAct = plan.actions.find((a) => a.path === 'memories/daily/2026-08-30.md');
-    const jsonlAct = plan.actions.find((a) => a.path === 'memories/SUGGESTIONS.jsonl');
+    const mdAct = plan.actions.find((a) => a.path === 'dsh-maestro-memory/daily/2026-08-30.md');
+    const jsonlAct = plan.actions.find((a) => a.path === 'dsh-maestro-memory/SUGGESTIONS.jsonl');
     expect(mdAct?.action).toBe('merge');
     expect(mdAct?.added).toBe(1);
     expect(jsonlAct?.action).toBe('merge');
@@ -79,7 +79,7 @@ describe('sync-plan', () => {
 
   it('buildPreview stores bounded 60s preview with opaque ID and revision from snapshots+direction', async () => {
     clearPreviews();
-    const snap: FileSnapshot = { path: 'memories/a.md', sha256: 'same', size: 5, kind: 'memory' };
+    const snap: FileSnapshot = { path: 'dsh-maestro-memory/a.md', sha256: 'same', size: 5, kind: 'memory' };
     const preview = await buildPreview([snap], [snap], 'pull', new Map(), new Map());
     expect(preview.previewId).toMatch(/^[0-9a-f]{16,}$/);
     expect(preview.expiresAt).toBeDefined();
@@ -93,11 +93,11 @@ describe('sync-plan', () => {
   });
 
   it('copies remote-only for pull and skips for push', async () => {
-    const remoteSnap: FileSnapshot = { path: 'memories/new.md', sha256: 'new', size: 5, kind: 'memory' };
-    const pull = await buildPlan([], [remoteSnap], 'pull', new Map(), new Map([['memories/new.md', Buffer.from('hi')]]));
+    const remoteSnap: FileSnapshot = { path: 'dsh-maestro-memory/new.md', sha256: 'new', size: 5, kind: 'memory' };
+    const pull = await buildPlan([], [remoteSnap], 'pull', new Map(), new Map([['dsh-maestro-memory/new.md', Buffer.from('hi')]]));
     expect(pull.actions[0].action).toBe('copy');
     expect(pull.summary.copied).toBe(1);
-    const push = await buildPlan([], [remoteSnap], 'push', new Map(), new Map([['memories/new.md', Buffer.from('hi')]]));
+    const push = await buildPlan([], [remoteSnap], 'push', new Map(), new Map([['dsh-maestro-memory/new.md', Buffer.from('hi')]]));
     expect(push.actions[0].action).toBe('skip');
   });
 
@@ -105,25 +105,25 @@ describe('sync-plan', () => {
     const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-preview-'));
     const stubRunner: any = { run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })) };
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
-      fs.writeFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md'), 'a\n§\nfoo\n');
-      fs.writeFileSync(path.join(localRoot, 'memories', 'shared.md'), 'identical\n');
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory', 'daily', '2026-08-29.md'), 'a\n§\nfoo\n');
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory', 'shared.md'), 'identical\n');
       // remote has daily with one extra entry; shared is byte-identical
       const fake = createFakeRemote(
         new Map<string, Buffer>([
-          ['memories/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n§\nbar\n')],
-          ['memories/shared.md', Buffer.from('identical\n')],
+          ['dsh-maestro-memory/daily/2026-08-29.md', Buffer.from('a\n§\nfoo\n§\nbar\n')],
+          ['dsh-maestro-memory/shared.md', Buffer.from('identical\n')],
         ]),
       );
       const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
 
       const preview = await svc.preview({ direction: 'pull' });
-      expect(preview.actions).toContainEqual(expect.objectContaining({ path: 'memories/daily/2026-08-29.md', action: 'merge', added: 1 }));
+      expect(preview.actions).toContainEqual(expect.objectContaining({ path: 'dsh-maestro-memory/daily/2026-08-29.md', action: 'merge', added: 1 }));
       expect(preview.summary.skipped).toBe(1);
-      const skip = preview.actions.find((a: any) => a.path === 'memories/shared.md');
+      const skip = preview.actions.find((a: any) => a.path === 'dsh-maestro-memory/shared.md');
       expect(skip?.action).toBe('skip');
       // preview must not have written to the live root
-      expect(fs.readFileSync(path.join(localRoot, 'memories', 'daily', '2026-08-29.md'), 'utf-8')).toBe('a\n§\nfoo\n');
+      expect(fs.readFileSync(path.join(localRoot, 'dsh-maestro-memory', 'daily', '2026-08-29.md'), 'utf-8')).toBe('a\n§\nfoo\n');
       // previewId and revision
       expect(preview.previewId).toBeDefined();
       expect(preview.revision).toBeDefined();
@@ -136,9 +136,9 @@ describe('sync-plan', () => {
     const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svc-skip-'));
     const stubRunner: any = { run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })) };
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories'), { recursive: true });
-      fs.writeFileSync(path.join(localRoot, 'memories', 'a.md'), 'same content');
-      const fake = createFakeRemote(new Map<string, Buffer>([['memories/a.md', Buffer.from('same content')]]));
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory'), { recursive: true });
+      fs.writeFileSync(path.join(localRoot, 'dsh-maestro-memory', 'a.md'), 'same content');
+      const fake = createFakeRemote(new Map<string, Buffer>([['dsh-maestro-memory/a.md', Buffer.from('same content')]]));
       const svc = new SyncService({ localDsh: localRoot, remote: 'host', remoteDsh: '/home/kai/.dsh', fs: fs as any, runner: stubRunner as any, transport: fake.transport as any });
       const preview = await svc.preview({ direction: 'pull' });
       expect(preview.summary.skipped).toBe(1);

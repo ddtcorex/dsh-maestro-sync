@@ -5,7 +5,7 @@ import { SyncService } from '../src/host/sync-service.js';
 import { clearPreviews } from '../src/host/sync-plan.js';
 import { createFakeRemote, makeTempRoots } from './helpers/fake-transport.js';
 
-const MD = 'memories/daily/2026-08-29.md';
+const MD = 'dsh-maestro-memory/daily/2026-08-29.md';
 
 const stubRunner: any = {
   run: vi.fn(async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 })),
@@ -17,7 +17,7 @@ describe('preview/apply contract', () => {
   it('preview is read-only and returns previewId with 60s expiry and exact actions', async () => {
     const { localRoot, cleanup } = makeTempRoots('preview-readonly-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       const localPath = path.join(localRoot, MD);
       fs.writeFileSync(localPath, 'a\n§\nfoo\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nfoo\n§\nbar\n')]]));
@@ -50,7 +50,7 @@ describe('preview/apply contract', () => {
   it('apply rejects without confirm:true, without a valid previewId, and after expiry', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-guards-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nfoo\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nfoo\n§\nbar\n')]]));
       const svc = new SyncService({
@@ -84,7 +84,7 @@ describe('preview/apply contract', () => {
   it('apply rejects when direction mismatches the preview', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-dir-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nfoo\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nfoo\n§\nbar\n')]]));
       const svc = new SyncService({
@@ -105,7 +105,7 @@ describe('preview/apply contract', () => {
   it('a preview is single-use: a second apply with the same previewId is rejected', async () => {
     const { localRoot, cleanup } = makeTempRoots('apply-once-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nfoo\n');
       const fake = createFakeRemote(new Map([[MD, Buffer.from('a\n§\nfoo\n§\nbar\n')]]));
       const svc = new SyncService({

@@ -10,7 +10,7 @@ function makeRunner(overrides: Partial<Record<string, any>> = {}): ProcessRunner
         return { stdout: Buffer.from('/home/kai'), stderr: Buffer.alloc(0), exitCode: 0 };
       }
       if (file === 'ssh' && args.some((a) => String(a).includes('find'))) {
-        return { stdout: Buffer.from('memories/a.md\nmemories/b.md\n'), stderr: Buffer.alloc(0), exitCode: 0 };
+        return { stdout: Buffer.from('dsh-maestro-memory/a.md\ndsh-maestro-memory/b.md\n'), stderr: Buffer.alloc(0), exitCode: 0 };
       }
       if (file === 'rsync') {
         return { stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), exitCode: 0 };
@@ -35,13 +35,13 @@ describe('transport', () => {
       run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('no such file'), exitCode: 23 })),
     } as unknown as ProcessRunner;
     const transport = new SshRsyncTransport(runner);
-    await expect(transport.stage({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, ['memories/a.md'], '/tmp/dest')).rejects.toMatchObject({ phase: 'stage' });
+    await expect(transport.stage({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, ['dsh-maestro-memory/a.md'], '/tmp/dest')).rejects.toMatchObject({ phase: 'stage' });
   });
 
   it('stage uses single rsync with files-from and preserves binary', async () => {
     const runner = makeRunner();
     const transport = new SshRsyncTransport(runner);
-    await transport.stage({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, ['memories/a.md', 'sessions/x/y/session.jsonl.zstd'], '/tmp/dest');
+    await transport.stage({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, ['dsh-maestro-memory/a.md', 'sessions/x/y/session.jsonl.zstd'], '/tmp/dest');
     const rsyncCalls = (runner.run as any).mock.calls.filter(([f]: any) => f === 'rsync');
     expect(rsyncCalls.length).toBe(1);
     const args = rsyncCalls[0][1] as string[];
@@ -58,7 +58,7 @@ describe('transport', () => {
 
   it('manifest runs one ssh with the fixed script and parses NUL-framed stdout', async () => {
     const entries = [
-      { path: 'memories/daily/a.md', sha256: 'a'.repeat(64), size: 5, mtimeSec: 1 },
+      { path: 'dsh-maestro-memory/daily/a.md', sha256: 'a'.repeat(64), size: 5, mtimeSec: 1 },
       { path: 'sessions/x/y/session.jsonl.zstd', sha256: 'b'.repeat(64), size: 7, mtimeSec: 2 },
     ];
     const runner: ProcessRunner = {
@@ -74,7 +74,7 @@ describe('transport', () => {
     const transport = new SshRsyncTransport(runner);
     const out = await transport.manifest({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
     expect(out.length).toBe(2);
-    expect(out[0]!.path).toBe('memories/daily/a.md');
+    expect(out[0]!.path).toBe('dsh-maestro-memory/daily/a.md');
     expect(out[1]!.sha256).toBe('b'.repeat(64));
     expect((runner.run as any).mock.calls[0][0]).toBe('ssh');
   });

@@ -184,7 +184,7 @@ export class SyncService {
   }
 
   /**
-   * Local eligible files (memories/*.md, memories/SUGGESTIONS.jsonl,
+   * Local eligible files (dsh-maestro-memory/*.md, dsh-maestro-memory/SUGGESTIONS.jsonl,
    * sessions/<cwd-hash>/<id>/session.jsonl.zstd) as relative paths, sorted.
    * Only content that matches the eligible contract is ever read or hashed.
    */
