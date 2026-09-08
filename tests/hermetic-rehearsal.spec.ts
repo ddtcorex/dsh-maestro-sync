@@ -17,9 +17,9 @@ import { makeSessionBuffer, sessionHeader } from './helpers/zstd.js';
 
 const stubRunner: any = { run: async () => ({ stdout: Buffer.from('ok'), stderr: Buffer.alloc(0), exitCode: 0 }) };
 
-const MD = 'memories/daily/2026-08-29.md';
+const MD = 'dsh-maestro-memory/daily/2026-08-29.md';
 const SESSION = 'sessions/abc123/def456/session.jsonl.zstd';
-const SUGGESTIONS = 'memories/SUGGESTIONS.jsonl';
+const SUGGESTIONS = 'dsh-maestro-memory/SUGGESTIONS.jsonl';
 
 function buildRoots(prefix: string): { localRoot: string; remoteRoot: string; cleanup: () => void } {
   const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), `${prefix}-local-`));
@@ -111,13 +111,13 @@ describe('hermetic two-root rehearsal', () => {
       expect(fs.readFileSync(path.join(remoteRoot, 'profiles/web/package.json'), 'utf-8')).toBe('{"private":true}');
 
       // now push a local-only change; push preview is a plan, apply publishes to the remote
-      seed(localRoot, { 'memories/daily/2026-08-30.md': 'b\n§\nlocal-new-day\n' });
+      seed(localRoot, { 'dsh-maestro-memory/daily/2026-08-30.md': 'b\n§\nlocal-new-day\n' });
       const pushPreview = await svc.preview({ direction: 'push' });
-      const pushCopy = pushPreview.actions.find((a: any) => a.path === 'memories/daily/2026-08-30.md')!;
+      const pushCopy = pushPreview.actions.find((a: any) => a.path === 'dsh-maestro-memory/daily/2026-08-30.md')!;
       expect(pushCopy.action).toBe('copy');
       const pushed = await svc.apply({ previewId: pushPreview.previewId, direction: 'push', confirm: true });
       expect(pushed.ok).toBe(true);
-      expect(fs.readFileSync(path.join(remoteRoot, 'memories/daily/2026-08-30.md'), 'utf-8')).toBe('b\n§\nlocal-new-day\n');
+      expect(fs.readFileSync(path.join(remoteRoot, 'dsh-maestro-memory/daily/2026-08-30.md'), 'utf-8')).toBe('b\n§\nlocal-new-day\n');
       // push converges too
       const secondPush = await svc.preview({ direction: 'push' });
       expect(secondPush.actions.every((a: any) => a.action === 'skip')).toBe(true);

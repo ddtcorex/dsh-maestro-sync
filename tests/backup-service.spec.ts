@@ -30,8 +30,8 @@ describe('backup preview', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories', 'daily'), { recursive: true });
-      fs.writeFileSync(path.join(dsh, 'memories/daily/2026-09-01.md'), 'day-one');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory', 'daily'), { recursive: true });
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/daily/2026-09-01.md'), 'day-one');
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
       expect(p.summary.missing).toBeGreaterThanOrEqual(1);
@@ -47,8 +47,8 @@ describe('backup preview', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk2-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'));
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'x');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'x');
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
       const file = path.join(dsh, '.pv', `${p.previewId}.backup.json`);
@@ -65,14 +65,14 @@ describe('backup apply', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk2-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'), { recursive: true });
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'backup-me');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'), { recursive: true });
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'backup-me');
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
       expect(p.summary.missing).toBe(1);
       const r = await svc.apply({ previewId: p.previewId, confirm: true });
       expect(r.ok).toBe(true);
-      expect(r.committed).toContain('memories/a.md');
+      expect(r.committed).toContain('dsh-maestro-memory/a.md');
       const listStore = new S3ObjectStore({ endpoint: h.url, region: 'auto', accessKeyId: 'ak', secretAccessKey: 'sk' });
       const keys = (await listStore.list(h.bucket, 'v1/hosts/t/')).map((e) => e.key);
       expect(keys.some((k) => k.startsWith('v1/hosts/t/blobs/sha256/'))).toBe(true);
@@ -91,8 +91,8 @@ describe('backup apply', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk3-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'));
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'x');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'x');
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
       await svc.apply({ previewId: p.previewId, confirm: true });
@@ -113,8 +113,8 @@ describe('backup apply', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk3c-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'));
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'x');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'x');
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
       await expect(svc.apply({ previewId: p.previewId, confirm: false as any })).rejects.toMatchObject({ code: 'CONFIRM_REQUIRED' });
@@ -128,9 +128,9 @@ describe('backup apply', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'bk3f-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'));
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'x');
-      fs.writeFileSync(path.join(dsh, 'memories/b.md'), 'y');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'x');
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/b.md'), 'y');
       // break the store so blob PUTs fail: point at a fresh fake with the same prefix but a header that 400s
       const svc = makeSvc(h, dsh);
       const p = await svc.preview();
@@ -155,15 +155,15 @@ describe('backup apply', () => {
 
 describe('restore', () => {
   async function seeded(dsh: string, h: Awaited<ReturnType<typeof startFakeS3>>) {
-    fs.mkdirSync(path.join(dsh, 'memories'), { recursive: true });
-    fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'backed-a');
-    fs.writeFileSync(path.join(dsh, 'memories/only-backup.md'), 'gone-locally');
+    fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'), { recursive: true });
+    fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'backed-a');
+    fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'), 'gone-locally');
     const svc = makeSvc(h, dsh);
     const p = await svc.preview();
     await svc.apply({ previewId: p.previewId, confirm: true });
     // diverge: a.md newer locally, only-backup.md deleted locally
-    fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'local-edit');
-    fs.unlinkSync(path.join(dsh, 'memories/only-backup.md'));
+    fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'local-edit');
+    fs.unlinkSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'));
     return svc;
   }
 
@@ -174,14 +174,14 @@ describe('restore', () => {
     const dest = path.join(dsh, 'restored');
     try {
       const svc = await seeded(dsh, h);
-      fs.writeFileSync(path.join(dsh, 'memories/only-backup.md'), 'local-edit-after-backup');
-      const liveBefore = fs.readFileSync(path.join(dsh, 'memories/only-backup.md'), 'utf-8');
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'), 'local-edit-after-backup');
+      const liveBefore = fs.readFileSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'), 'utf-8');
       const rp = await svc.restorePreview({ mode: 'new-dir' });
       const r = await svc.restoreApply({ previewId: rp.previewId, mode: 'new-dir', destDir: dest, confirm: true });
       expect(r.ok).toBe(true);
-      expect(fs.readFileSync(path.join(dest, 'memories/a.md'), 'utf-8')).toBe('backed-a');
-      expect(fs.existsSync(path.join(dest, 'memories/only-backup.md'))).toBe(true);
-      expect(fs.readFileSync(path.join(dsh, 'memories/only-backup.md'), 'utf-8')).toBe(liveBefore); // live untouched
+      expect(fs.readFileSync(path.join(dest, 'dsh-maestro-memory/a.md'), 'utf-8')).toBe('backed-a');
+      expect(fs.existsSync(path.join(dest, 'dsh-maestro-memory/only-backup.md'))).toBe(true);
+      expect(fs.readFileSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'), 'utf-8')).toBe(liveBefore); // live untouched
     } finally {
       fs.rmSync(dsh, { recursive: true, force: true });
     }
@@ -193,15 +193,15 @@ describe('restore', () => {
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'rs2-'));
     try {
       const svc = await seeded(dsh, h);
-      fs.writeFileSync(path.join(dsh, 'memories/unrelated.md'), 'keep-me');
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/unrelated.md'), 'keep-me');
       const rp = await svc.restorePreview({ mode: 'in-place' });
       const r = await svc.restoreApply({ previewId: rp.previewId, mode: 'in-place', confirm: true });
       expect(r.ok).toBe(true);
-      expect(fs.readFileSync(path.join(dsh, 'memories/a.md'), 'utf-8')).toBe('backed-a'); // restored over the local edit
-      expect(fs.existsSync(path.join(dsh, 'memories/only-backup.md'))).toBe(true);       // re-created from backup
-      const baks = fs.readdirSync(path.join(dsh, 'memories')).filter((f) => f.includes('.bak.'));
+      expect(fs.readFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'utf-8')).toBe('backed-a'); // restored over the local edit
+      expect(fs.existsSync(path.join(dsh, 'dsh-maestro-memory/only-backup.md'))).toBe(true);       // re-created from backup
+      const baks = fs.readdirSync(path.join(dsh, 'dsh-maestro-memory')).filter((f) => f.includes('.bak.'));
       expect(baks.some((f) => f.startsWith('a.md.bak.'))).toBe(true);                    // overwritten target kept a backup
-      expect(fs.readFileSync(path.join(dsh, 'memories/unrelated.md'), 'utf-8')).toBe('keep-me'); // unrelated untouched
+      expect(fs.readFileSync(path.join(dsh, 'dsh-maestro-memory/unrelated.md'), 'utf-8')).toBe('keep-me'); // unrelated untouched
     } finally {
       fs.rmSync(dsh, { recursive: true, force: true });
     }
@@ -214,8 +214,8 @@ describe('gc', () => {
     handles.push(h);
     const dsh = fs.mkdtempSync(path.join(os.tmpdir(), 'gc-'));
     try {
-      fs.mkdirSync(path.join(dsh, 'memories'));
-      fs.writeFileSync(path.join(dsh, 'memories/a.md'), 'aaa');
+      fs.mkdirSync(path.join(dsh, 'dsh-maestro-memory'));
+      fs.writeFileSync(path.join(dsh, 'dsh-maestro-memory/a.md'), 'aaa');
       const store = new S3ObjectStore({ endpoint: h.url, region: 'auto', accessKeyId: 'ak', secretAccessKey: 'sk' });
       const svc = new BackupService({ localDsh: dsh, store, target: { provider: 'r2', bucket: h.bucket, prefix: 'v1/hosts/t/', hostId: 't' }, previewDir: path.join(dsh, '.pv'), cacheDir: path.join(dsh, '.fp'), fs: fs as any });
       const p = await svc.preview();

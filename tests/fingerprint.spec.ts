@@ -12,16 +12,16 @@ beforeEach(() => {
 
 describe('fingerprint index', () => {
   it('save+load round-trips entries and is tolerant of a missing/corrupt index', () => {
-    saveIndex(dir, { schema: 1, rootKey: 'r', entries: { 'memories/a.md': { dev: 1, ino: 2, size: 3, mtimeNs: '4', ctimeNs: '5', sha256: 'aa' } } });
+    saveIndex(dir, { schema: 1, rootKey: 'r', entries: { 'dsh-maestro-memory/a.md': { dev: 1, ino: 2, size: 3, mtimeNs: '4', ctimeNs: '5', sha256: 'aa' } } });
     const loaded = loadIndex(dir);
-    expect(loaded.entries['memories/a.md']!.sha256).toBe('aa');
+    expect(loaded.entries['dsh-maestro-memory/a.md']!.sha256).toBe('aa');
     expect(loadIndex(path.join(dir, 'missing')).entries).toEqual({});
     fs.writeFileSync(path.join(dir, 'index.json'), 'not-json{');
     expect(loadIndex(dir).entries).toEqual({});
   });
 
   it('matchesStat is true only when dev+ino+size+mtimeNs+ctimeNs all match (ctime guard on same-size rewrite)', () => {
-    const file = path.join(dir, 'memories', 'x.md');
+    const file = path.join(dir, 'dsh-maestro-memory', 'x.md');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, 'hello');
     const st1 = fs.statSync(file, { bigint: true });
@@ -35,6 +35,6 @@ describe('fingerprint index', () => {
   });
 
   it('probeIndex returns null for unknown paths', () => {
-    expect(probeIndex('memories/x.md', { schema: 1, rootKey: 'r', entries: {} })).toBeNull();
+    expect(probeIndex('dsh-maestro-memory/x.md', { schema: 1, rootKey: 'r', entries: {} })).toBeNull();
   });
 });

@@ -176,7 +176,7 @@ export function R2SyncPanel(props: { b: ReturnType<typeof useBackupTarget> }): R
       {banner()}
       <ConfigForm b={b} />
       <div data-r2-stats="">
-        <StatTile icon="server" value={String(st?.eligible?.md ?? 0)} label="memories" />
+        <StatTile icon="server" value={String(st?.eligible?.md ?? 0)} label="memory" />
         <StatTile icon="refresh" value={String(st?.eligible?.sessions ?? 0)} label="sessions" />
         <StatTile icon="check" value={st?.lastManifest ? 'yes' : 'no'} label="last backup" />
       </div>

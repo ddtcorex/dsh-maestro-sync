@@ -3,7 +3,7 @@ import type { RemoteTarget } from './sync-types.js';
 export const HOST_RE = /^(?!-)[A-Za-z0-9._@:-]+$/;
 export const ABSOLUTE_RE = /^\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+$/;
 export const ELIGIBLE_RE =
-  /^(?:memories\/(?!.*\.bak\.)[A-Za-z0-9._\/-]+\.md|memories\/SUGGESTIONS\.jsonl|sessions\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/session\.jsonl\.zstd|sessions\/[A-Za-z0-9._\/-]+\.jsonl\.zstd)$/;
+  /^(?:dsh-maestro-memory\/(?!.*\.bak\.)[A-Za-z0-9._\/-]+\.md|dsh-maestro-memory\/SUGGESTIONS\.jsonl|sessions\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/session\.jsonl\.zstd|sessions\/[A-Za-z0-9._\/-]+\.jsonl\.zstd)$/;
 
 // Backwards-compatible aliases required by spec
 export const HOST = HOST_RE;
@@ -73,7 +73,7 @@ export function normalizeEligiblePath(value: string): string {
     throw new Error(`ineligible path: contains control characters: ${JSON.stringify(value)}`);
   }
   if (value.includes('..')) {
-    // traversal not allowed at all; eligible paths are strictly under memories/ or sessions/
+    // traversal not allowed at all; eligible paths are strictly under dsh-maestro-memory/ or sessions/
     // The ELIGIBLE regex would reject it anyway, but be explicit
     throw new Error(`ineligible path: traversal: ${JSON.stringify(value)}`);
   }

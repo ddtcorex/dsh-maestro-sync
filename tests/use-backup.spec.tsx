@@ -47,7 +47,7 @@ describe('useBackupTarget', () => {
       if (method === 'backupPreview') return { ok: true, value: { previewId, summary: { identical: 1, missing: 1, addedBytes: 10 } } };
       if (method === 'backupApply') {
         applied = payload;
-        return { ok: true, value: { ok: true, committed: ['memories/a.md'], failures: [] } };
+        return { ok: true, value: { ok: true, committed: ['dsh-maestro-memory/a.md'], failures: [] } };
       }
       throw new Error('unexpected ' + method);
     });

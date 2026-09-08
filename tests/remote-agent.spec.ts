@@ -48,7 +48,7 @@ function stage(remote: RemoteFixture, operationId: string, rel: string, content:
   fs.writeFileSync(p, content);
 }
 
-const MEM = 'memories/daily/2026-08-29.md';
+const MEM = 'dsh-maestro-memory/daily/2026-08-29.md';
 
 beforeEach(() => {});
 
@@ -112,11 +112,11 @@ describe('remote-agent', () => {
     const remote = makeRemote();
     try {
       const content = Buffer.from('new remote-only file\n');
-      stage(remote, 'op1', 'memories/projects/new.md', content);
-      const manifest = JSON.stringify({ path: 'memories/projects/new.md', expected: 'absent' }) + '\n';
+      stage(remote, 'op1', 'dsh-maestro-memory/projects/new.md', content);
+      const manifest = JSON.stringify({ path: 'dsh-maestro-memory/projects/new.md', expected: 'absent' }) + '\n';
       const res = runCommit(remote, 'op1', manifest);
       expect(res.status).toBe(0);
-      expect(fs.readFileSync(path.join(remote.root, 'memories/projects/new.md')).equals(content)).toBe(true);
+      expect(fs.readFileSync(path.join(remote.root, 'dsh-maestro-memory/projects/new.md')).equals(content)).toBe(true);
     } finally {
       remote.cleanup();
     }

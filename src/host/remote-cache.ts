@@ -54,7 +54,7 @@ export function buildWarmCacheScript(dshRoot: string): string {
   const cache = remoteCachePath(dshRoot);
   return [
     `mkdir -p "${dshRoot}/.maestro-sync";`,
-    `find ${dshRoot}/memories ${dshRoot}/sessions`,
+    `find ${dshRoot}/dsh-maestro-memory ${dshRoot}/sessions`,
     `\\( -name node_modules -o -name .git -o -name .supervisor -o -name profiles \\) -prune -o -type f -print0`,
     `| xargs -0 stat --printf='%i %s %.Y %.Z\\t%n\\0' 2>/dev/null`,
     `| while IFS= read -r -d '' rec; do`,

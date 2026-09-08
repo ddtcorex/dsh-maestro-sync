@@ -249,27 +249,27 @@ export function formatLastSync(v: string | null): string {
 }
 
 export function fileIcon(path: string): IconName {
-  if (path.startsWith('memories/daily/')) return 'calendar'
-  if (path.startsWith('memories/projects/')) return 'folder'
-  if (path === 'memories/MEMORY.md') return 'star'
+  if (path.startsWith('dsh-maestro-memory/daily/')) return 'calendar'
+  if (path.startsWith('dsh-maestro-memory/projects/')) return 'folder'
+  if (path === 'dsh-maestro-memory/MEMORY.md') return 'star'
   if (path.startsWith('sessions/')) return 'message'
   return 'file'
 }
 
 export function formatFile(path: string): { icon: IconName; title: string; path: string; meta: string } {
-  if (path.startsWith('memories/daily/')) {
-    const date = path.replace('memories/daily/', '').replace('.md', '')
+  if (path.startsWith('dsh-maestro-memory/daily/')) {
+    const date = path.replace('dsh-maestro-memory/daily/', '').replace('.md', '')
     try {
       const d = new Date(date)
       if (!isNaN(d.getTime())) return { icon: 'calendar', title: `Daily notes — ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`, path, meta: 'Daily' }
     } catch {}
     return { icon: 'calendar', title: `Daily notes — ${date}`, path, meta: 'Daily' }
   }
-  if (path.startsWith('memories/projects/')) {
+  if (path.startsWith('dsh-maestro-memory/projects/')) {
     const hash = path.split('/')[2] ?? ''
     return { icon: 'folder', title: 'Project memory', path, meta: hash.slice(0, 7) }
   }
-  if (path === 'memories/MEMORY.md') return { icon: 'star', title: 'Global memory', path, meta: 'Global' }
+  if (path === 'dsh-maestro-memory/MEMORY.md') return { icon: 'star', title: 'Global memory', path, meta: 'Global' }
   if (path.startsWith('sessions/')) {
     const hash = path.split('/')[1] ?? ''
     return { icon: 'message', title: 'Session', path, meta: hash.slice(0, 7) }

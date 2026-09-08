@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Safe machine-to-machine sync for DeepSeek Harness (DSH) state: merge `memories/`
+Safe machine-to-machine sync for DeepSeek Harness (DSH) state: merge `dsh-maestro-memory/`
 (Markdown + `SUGGESTIONS.jsonl`) and `sessions/**/session.jsonl.zstd` across two
 machines over `ssh`/`rsync`. One Cordis row (`id: dsh-maestro-sync`) with a host
 half (Node CLI/RPC/tools) and a client half (Settings UI).
@@ -40,8 +40,8 @@ profile) when you want it.
   was actually published. The wrapper (`sync-harness.sh`) never falls back to
   destructive rsync when the CLI is missing/errors; `--strategy=override` needs
   `--ack-override`.
-- **Eligible data only**: `memories/**/*.md` (no `*.bak.*`),
-  `memories/SUGGESTIONS.jsonl`, `sessions/<hash>/<id>/session.jsonl.zstd`.
+- **Eligible data only**: `dsh-maestro-memory/**/*.md` (no `*.bak.*`),
+  `dsh-maestro-memory/SUGGESTIONS.jsonl`, `sessions/<hash>/<id>/session.jsonl.zstd`.
   Settings, profiles, tunnel artifacts, secret material, logs, caches, supervisor
   state are never read, hashed or copied.
 - **Backup/restore/GC are the same preview→confirm contract** (spec

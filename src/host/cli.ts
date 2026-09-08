@@ -41,7 +41,7 @@ interface CliOpts {
 
 function printHelp(prog: string): string {
   return `
-dsh-maestro-sync CLI — merge memories & sessions across machines
+dsh-maestro-sync CLI — merge memory & sessions across machines
 
 USAGE
   node ${prog} --pull|--push [--dry-run]                 preview (default, read-only)

@@ -14,12 +14,12 @@ import { buildRemoteManifestScript, parseRemoteManifest } from '../src/host/remo
 describe('remote fingerprint cache', () => {
   it('parses TSV fp.tsv entries (rel, ino, size, mtimeNs, ctimeNs, sha256)', () => {
     const buf = Buffer.from(
-      'memories/daily/a.md\t123\t100\t1700000000.123456789\t1700000000.123456789\t' + 'a'.repeat(64) + '\n' +
+      'dsh-maestro-memory/daily/a.md\t123\t100\t1700000000.123456789\t1700000000.123456789\t' + 'a'.repeat(64) + '\n' +
       'sessions/abc/def/session.jsonl.zstd\t9\t99\t1700000001.000000000\t1700000001.000000000\t' + 'b'.repeat(64) + '\n',
       'utf-8',
     );
     const m = parseFpCache(buf);
-    const e = m.get('memories/daily/a.md')!;
+    const e = m.get('dsh-maestro-memory/daily/a.md')!;
     expect(e.ino).toBe(123);
     expect(e.size).toBe(100);
     expect(e.mtimeNs).toBe('1700000000.123456789');
@@ -53,26 +53,26 @@ describe('remote fingerprint cache', () => {
     if (!isLinuxGnu) return; // needs GNU stat + bash
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rpc-'));
     try {
-      fs.mkdirSync(path.join(root, 'memories', 'daily'), { recursive: true });
-      const a = path.join(root, 'memories', 'daily', 'a.md');
+      fs.mkdirSync(path.join(root, 'dsh-maestro-memory', 'daily'), { recursive: true });
+      const a = path.join(root, 'dsh-maestro-memory', 'daily', 'a.md');
       fs.writeFileSync(a, 'same-bytes');
-      const b = path.join(root, 'memories', 'daily', 'b.md');
+      const b = path.join(root, 'dsh-maestro-memory', 'daily', 'b.md');
       fs.writeFileSync(b, 'other-bytes');
       // seed a cache holding a WRONG sha for a.md but EXACT GNU-stat triple → must be trusted (hint)
       const stA = spawnSync('stat', ['-c', '%i %s %.Y %.Z', a], { encoding: 'utf-8' }).stdout.trim();
       const cacheDir = path.join(root, '.maestro-sync');
       fs.mkdirSync(cacheDir, { recursive: true });
       const wrongSha = 'f'.repeat(64);
-      const cacheLine = `memories/daily/a.md\t${stA.split(' ').join('\t')}\t${wrongSha}\n`;
+      const cacheLine = `dsh-maestro-memory/daily/a.md\t${stA.split(' ').join('\t')}\t${wrongSha}\n`;
       fs.writeFileSync(path.join(cacheDir, 'fp.tsv'), cacheLine);
 
       const script = buildRemoteManifestScript(root);
       const res = spawnSync('bash', ['-c', script], { maxBuffer: 64 * 1024 * 1024, encoding: 'utf-8' });
       expect(res.status).toBe(0);
       const entries = parseRemoteManifest(Buffer.from(res.stdout, 'utf-8'));
-      const aEntry = entries.find((e) => e.path === 'memories/daily/a.md');
+      const aEntry = entries.find((e) => e.path === 'dsh-maestro-memory/daily/a.md');
       expect(aEntry!.sha256).toBe(wrongSha);       // cache match used, sha256sum skipped
-      const bEntry = entries.find((e) => e.path === 'memories/daily/b.md');
+      const bEntry = entries.find((e) => e.path === 'dsh-maestro-memory/daily/b.md');
       expect(bEntry!.sha256).toBe(require('node:crypto').createHash('sha256').update('other-bytes').digest('hex')); // miss → real hash
       // and the cache file was NOT modified by the read-only pass
       expect(fs.readFileSync(path.join(cacheDir, 'fp.tsv'), 'utf-8')).toBe(cacheLine);

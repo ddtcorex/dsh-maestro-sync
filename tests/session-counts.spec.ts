@@ -5,7 +5,7 @@ import { SyncService } from '../src/host/sync-service.js';
 import { clearPreviews } from '../src/host/sync-plan.js';
 import { createFakeRemote, makeTempRoots } from './helpers/fake-transport.js';
 
-const MD = 'memories/daily/2026-08-29.md';
+const MD = 'dsh-maestro-memory/daily/2026-08-29.md';
 const S1 = 'sessions/abc123/one/session.jsonl.zstd';
 const S2 = 'sessions/abc123/two/session.jsonl.zstd';
 const S3 = 'sessions/abc123/three/session.jsonl.zstd';
@@ -29,7 +29,7 @@ describe('count-only session preview', () => {
   it('sessions are counted by checksum without staging remote bytes; md files still get exact actions', async () => {
     const { localRoot, cleanup } = makeTempRoots('preview-count-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n§\nfoo\n');
       // remote: S1 added (pull), S2 updated (checksum differs), S3 identical
       const fake = createFakeRemote(
@@ -78,7 +78,7 @@ describe('count-only session preview', () => {
   it('a count-only preview revision equals a full-content apply revision for the same inventory', async () => {
     const { localRoot, cleanup } = makeTempRoots('preview-rev-');
     try {
-      fs.mkdirSync(path.join(localRoot, 'memories', 'daily'), { recursive: true });
+      fs.mkdirSync(path.join(localRoot, 'dsh-maestro-memory', 'daily'), { recursive: true });
       fs.writeFileSync(path.join(localRoot, MD), 'a\n');
       const fake = createFakeRemote(new Map([[S2, Buffer.from('sess-two-REMOTE\n')]]));
       fs.mkdirSync(path.join(localRoot, 'sessions', 'abc123', 'two'), { recursive: true });

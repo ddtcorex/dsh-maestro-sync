@@ -16,8 +16,8 @@ const PREVIEW_ID = 'a'.repeat(32);
 const summary = { copied: 1, merged: 1, skipped: 2, conflicts: 0, added: 1 };
 
 function makePreview(actions: any[] = [
-  { path: 'memories/daily/2026-08-29.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' },
-  { path: 'memories/projects/new.md', action: 'copy', target: 'local', added: 0, reason: 'remote only' },
+  { path: 'dsh-maestro-memory/daily/2026-08-29.md', action: 'merge', target: 'local', added: 1, reason: 'content differs' },
+  { path: 'dsh-maestro-memory/projects/new.md', action: 'copy', target: 'local', added: 0, reason: 'remote only' },
 ]) {
   return {
     ok: true,
@@ -130,7 +130,7 @@ describe('SyncPanel', () => {
       const f = previewFlow(makePreview());
       if (method === 'previewStart') return f['previewStart']();
       if (method === 'previewStatus') return f['previewStatus']();
-      if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: ['memories/daily/2026-08-29.md'], failures: [] });
+      if (method === 'apply') return carrier({ ok: true, revision: 'rev1', summary, committed: ['dsh-maestro-memory/daily/2026-08-29.md'], failures: [] });
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
@@ -176,7 +176,7 @@ describe('SyncPanel', () => {
 
   it('a long preview action list paginates with Show more', async () => {
     const user = userEvent.setup();
-    const actions = Array.from({ length: 12 }, (_, i) => ({ path: `memories/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`, action: 'merge' as const, target: 'local' as const, added: 1, reason: 'content differs' }));
+    const actions = Array.from({ length: 12 }, (_, i) => ({ path: `dsh-maestro-memory/daily/2026-08-${String(i + 1).padStart(2, '0')}.md`, action: 'merge' as const, target: 'local' as const, added: 1, reason: 'content differs' }));
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
@@ -256,7 +256,7 @@ describe('SyncPanel', () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 1, remoteOnly: 0, both: 0 });
-      if (method === 'status' && args?.bucket === 'localOnly') return carrier({ ok: true, total: 1, offset: 0, limit: 10, files: ['memories/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      if (method === 'status' && args?.bucket === 'localOnly') return carrier({ ok: true, total: 1, offset: 0, limit: 10, files: ['dsh-maestro-memory/MEMORY.md'], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       const cf = checkFlowBranches(method);
       if (cf) return cf;
