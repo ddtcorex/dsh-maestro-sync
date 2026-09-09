@@ -107,6 +107,67 @@ describe('host', () => {
     expect(mod.RPC_CHANNEL).toBe('/dsh-maestro-sync');
   });
 
+  it('registers bidirectional preview/apply tools with the maestro_sync_ prefix', async () => {
+    const { register } = await bootPlugin();
+    const names = register.mock.calls.map((call: any[]) => call[0].name);
+    expect(names).toContain('maestro_sync_bidirectional_preview');
+    expect(names).toContain('maestro_sync_bidirectional_apply');
+  });
+
+  it('bidirectional apply tool refuses without confirm:true and never writes', async () => {
+    const { register } = await bootPlugin();
+    const applySpy = vi.spyOn(SyncService.prototype, 'apply');
+    try {
+      const def = register.mock.calls.map((call: any[]) => call[0]).find((d: any) => d.name === 'maestro_sync_bidirectional_apply');
+      const res = JSON.parse((await def.execute({ previewId: 'x'.repeat(32) })).text);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/confirm/);
+      expect(applySpy).not.toHaveBeenCalled();
+    } finally {
+      applySpy.mockRestore();
+    }
+  });
+
+  it('bidirectionalPreview RPC returns exact push plus projected pull', async () => {
+    const { rpcHandler } = await bootPlugin();
+    const summary = { copied: 0, merged: 1, skipped: 0, conflicts: 0, added: 1 };
+    const previewSpy = vi.spyOn(SyncService.prototype, 'preview').mockImplementation(async ({ direction }: any) => ({
+      previewId: `pv-${direction}`,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      revision: 'r',
+      actions: [],
+      summary,
+      connection: { ok: true, host: 'h' },
+      remoteHost: 'h',
+    }) as any);
+    try {
+      const res = await rpcHandler('bidirectionalPreview', {});
+      expect(res.ok).toBe(true);
+      expect(res.value.push).toBeTruthy();
+      expect(res.value.pullProjected).toBeTruthy();
+      expect(previewSpy).toHaveBeenCalledWith(expect.objectContaining({ direction: 'push', scope: 'memory' }));
+      const resSessions = await rpcHandler('bidirectionalPreview', { includeSessions: true });
+      expect(resSessions.ok).toBe(true);
+      expect(previewSpy).toHaveBeenCalledWith(expect.objectContaining({ direction: 'push', scope: 'all' }));
+    } finally {
+      previewSpy.mockRestore();
+    }
+  });
+
+  it('bidirectionalApply RPC requires confirm:true and previewId', async () => {
+    const { rpcHandler } = await bootPlugin();
+    const applySpy = vi.spyOn(SyncService.prototype, 'apply');
+    try {
+      const noConfirm = await rpcHandler('bidirectionalApply', { previewId: 'x'.repeat(32) });
+      expect(noConfirm.ok).toBe(false);
+      const noId = await rpcHandler('bidirectionalApply', { confirm: true });
+      expect(noId.ok).toBe(false);
+      expect(applySpy).not.toHaveBeenCalled();
+    } finally {
+      applySpy.mockRestore();
+    }
+  });
+
   it('previewCancel errors on an unknown job and cancels a running job', async () => {
     const { rpcHandler } = await bootPlugin();
     const missing = await rpcHandler('previewCancel', { jobId: 'deadbeef' });
