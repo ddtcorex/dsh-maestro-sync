@@ -197,6 +197,15 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           <span data-sync-field-label="">Last sync</span>
           <span data-sync-field-value="" data-testid="sync-last-sync">{formatLastSync(lastSync)}</span>
         </div>
+        {s.machines ? (
+          <div data-sync-field="">
+            <span data-sync-field-label="">Machines</span>
+            <span data-sync-field-value="" data-testid="sync-machines">{s.machines.localId ?? '?'} ↔ {s.machines.remoteId ?? '?'}</span>
+            <Button variant="outline" size="sm" data-testid="sync-tunnel-restore" disabled={checking || busy} onClick={() => void s.handleTunnelRestore()}>
+              Restore tunnel
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* Stats */}

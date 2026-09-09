@@ -407,4 +407,25 @@ describe('SyncPanel', () => {
     expect(JSON.stringify(saved)).not.toContain('secret');
     expect(JSON.stringify(saved)).not.toContain('accessKey');
   });
+
+  it('Remote tab shows machine ids and offers tunnel restore on mismatch', async () => {
+    const user = userEvent.setup();
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      const cf = checkFlowBranches(method);
+      if (cf) return cf;
+      if (method === 'checkMachines') return carrier({ ok: true, mode: 'bidirectional', localId: 'dsh-home', remoteId: 'dsh-company', from: 'dsh-home', to: 'dsh-company' });
+      if (method === 'tunnelRestore') {
+        expect(args).toMatchObject({ side: 'local', confirm: true });
+        return carrier({ ok: true, side: 'local', profile: 'dsh-home' });
+      }
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await driveCheck(user);
+    expect(await screen.findByTestId('sync-machines')).toHaveTextContent(/dsh-home.*dsh-company/);
+    await user.click(screen.getByTestId('sync-tunnel-restore'));
+    await waitFor(() => expect(statusCalls(rpc)).toContain('tunnelRestore'));
+  });
 });

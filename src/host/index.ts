@@ -13,8 +13,11 @@ import { S3ObjectStore } from './s3-object-store.js';
 import { resolveBackupTarget, validateR2ConfigInput, type NormalizedR2Config } from './backup-config.js';
 import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
 import { validateHost } from './validation.js';
-import type { PreviewJobState } from './sync-types.js';
+import type { PreviewJobState, RemoteTarget } from './sync-types.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
+import { restoreLocalTunnel } from './tunnel-restore.js';
+import { checkMachines, readLocalMachineId } from './machine-id.js';
+import { restoreRemoteTunnel } from './tunnel-restore.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
 
@@ -41,73 +44,12 @@ function failCarrier(message: string, code = 'maestro-sync/rpc', details: Record
 
 /**
  * Best-effort tunnel profile restore after a confirmed apply.
- * Mirrors sync-harness.sh apply_local_tunnel_profile: re-patches
- * maestro/settings.json domains.tunnel from this machine's own profile dir.
- * Never throws; profile may not exist on CI.
+ * Delegates to the shared tunnel-restore module (local side only here;
+ * remote restore is an explicit tool/RPC, never implicit).
+ * Never throws; profiles may not exist on CI.
  */
 async function restoreTunnelProfile(): Promise<void> {
-  try {
-    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-    const profilesRoot = path.join(dshHome, 'dsh-maestro-remote', 'tunnel-profiles');
-    if (!fs.existsSync(profilesRoot)) return;
-    let profiles: string[] = [];
-    try {
-      profiles = fs.readdirSync(profilesRoot).filter((n) => {
-        try {
-          return fs.statSync(path.join(profilesRoot, n)).isDirectory();
-        } catch {
-          return false;
-        }
-      });
-    } catch {
-      return;
-    }
-    if (profiles.length === 0) return;
-
-    const envProfile = process.env.LOCAL_TUNNEL_PROFILE || process.env.TUNNEL_PROFILE;
-    const profileName = envProfile && profiles.includes(envProfile) ? envProfile : profiles[0];
-    if (!profileName) return;
-
-    const profileDir = path.join(profilesRoot, profileName);
-    const tunnelSettingsPath = path.join(profileDir, 'settings-tunnel.json');
-    const cloudflaredSrc = path.join(profileDir, 'cloudflared-config.yml');
-    const cloudflaredDst = path.join(dshHome, 'dsh-maestro-remote', 'cloudflared-config.yml');
-    const settingsPath = path.join(dshHome, 'maestro', 'settings.json');
-
-    if (!fs.existsSync(tunnelSettingsPath) || !fs.existsSync(settingsPath)) return;
-
-    try {
-      if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {
-        fs.copyFileSync(cloudflaredSrc, cloudflaredDst);
-        try {
-          fs.chmodSync(cloudflaredDst, 0o600);
-        } catch {}
-      }
-    } catch {}
-
-    try {
-      const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
-      const tunnelDomain = tunnelJson?.domains?.tunnel;
-      if (!tunnelDomain) return;
-      try {
-        const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
-        if (typeof cfgLib.set === 'function') {
-          await cfgLib.set('tunnel', tunnelDomain);
-          return;
-        }
-      } catch {}
-      const raw = fs.readFileSync(settingsPath, 'utf-8');
-      const doc = JSON.parse(raw);
-      doc.domains = doc.domains || {};
-      doc.domains.tunnel = tunnelDomain;
-      const tmp = settingsPath + '.tmp.' + Math.random().toString(16).slice(2, 6);
-      fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf-8');
-      fs.renameSync(tmp, settingsPath);
-      try {
-        fs.chmodSync(settingsPath, 0o600);
-      } catch {}
-    } catch {}
-  } catch {}
+  await restoreLocalTunnel();
 }
 
 function textTool(name: string, description: string, params: Record<string, any>, execute: (args: any) => Promise<string>) {
@@ -150,6 +92,17 @@ export default {
     const makeService = async () => {
       const cfg = await loadSyncConfig();
       return new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
+    };
+
+    // Shared lifecycle reads: local machine-id via the service fs, remote via
+    // the service transport (fixed agent op). No new seams — tests stub the
+    // service/transport methods.
+    const peerMachine = (id: string): string => (id === 'dsh-home' ? 'dsh-company' : 'dsh-home');
+    const lifecycleIds = async (svc: SyncService): Promise<{ localId: string | null; remoteId: string | null; target: RemoteTarget }> => {
+      const localId = await readLocalMachineId(svc.fs, svc.localDsh);
+      const target = await svc.resolveTarget();
+      const remoteId = await svc.transport.readMachineId(target);
+      return { localId, remoteId, target };
     };
 
     // maestro_sync_preview — read-only exact plan
@@ -254,12 +207,78 @@ export default {
       ),
     );
 
+    // maestro_sync_check_machines — read-only machine identity preflight
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_check_machines',
+          'Check machine identity before sync (read-only): local/remote machine-id plus the from/to verdict.',
+          {
+            from: { type: 'string', description: 'absolute source machine (default: local machine-id)' },
+            to: { type: 'string', description: 'absolute destination machine (default: peer of from)' },
+            mode: { type: 'string', enum: ['pull', 'push', 'bidirectional'], description: 'operation the check guards (default: bidirectional)' },
+          },
+          async (a) => {
+            const svc = await makeService();
+            const mode = a?.mode === 'pull' || a?.mode === 'push' ? a.mode : 'bidirectional';
+            try {
+              const { localId, remoteId } = await lifecycleIds(svc);
+              const from = typeof a?.from === 'string' ? a.from : (localId ?? 'dsh-home');
+              const to = typeof a?.to === 'string' ? a.to : peerMachine(from);
+              const verdict = checkMachines({ mode, from, to, localId, remoteId });
+              return verdict.ok
+                ? JSON.stringify({ ok: true, mode, localId, remoteId, from, to })
+                : JSON.stringify({ ok: false, code: verdict.code, error: verdict.message, localId, remoteId, from, to });
+            } catch (e: any) {
+              return JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code });
+            }
+          },
+        ),
+      ),
+    );
+
+    // maestro_sync_tunnel_restore — explicit identity restore (confirm-first, never implicit)
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_tunnel_restore',
+          'Restore the tunnel identity (domains.tunnel only) from a machine profile. Requires confirm:true; remote side additionally requires profile.',
+          {
+            side: { type: 'string', enum: ['local', 'remote'], description: 'which side to restore (default: local)' },
+            profile: { type: 'string', description: 'profile name (required for remote)' },
+            confirm: { type: 'boolean', description: 'must be true' },
+          },
+          async (a) => {
+            if (a?.confirm !== true) return JSON.stringify({ ok: false, error: 'tunnel restore requires confirm:true' });
+            const side = a?.side === 'remote' ? 'remote' : 'local';
+            const svc = await makeService();
+            try {
+              if (side === 'local') {
+                const r = await restoreLocalTunnel({ dshHome: svc.localDsh, profileName: typeof a?.profile === 'string' ? a.profile : undefined });
+                return r.ok
+                  ? JSON.stringify({ ok: true, side, profile: r.profile })
+                  : JSON.stringify({ ok: false, side, code: r.code });
+              }
+              if (typeof a?.profile !== 'string' || !a.profile) return JSON.stringify({ ok: false, side, error: 'tunnel restore --side remote requires profile' });
+              const target = await svc.resolveTarget();
+              await svc.transport.ensureAgent(target);
+              const r = await restoreRemoteTunnel(svc.transport, target, a.profile);
+              return r.ok
+                ? JSON.stringify({ ok: true, side, profile: r.profile, changed: r.changed })
+                : JSON.stringify({ ok: false, side, code: r.code });
+            } catch (e: any) {
+              return JSON.stringify({ ok: false, side, error: e?.message ?? String(e), code: e?.code });
+            }
+          },
+        ),
+      ),
+    );
+
     // maestro_sync_status — bounded cursor-paged file status
     ctx.effect(() =>
       ctx.tools.register(
         textTool(
-          'maestro_sync_status',
-          'Sync status: counts of local/remote/both files (never implies same content)',
+          'maestro_sync_status',          'Sync status: counts of local/remote/both files (never implies same content)',
           {},
           async () => {
             const svc = await makeService();
@@ -543,8 +562,43 @@ export default {
                   ? okCarrier({ ok: true, push: r.push, pull: r.pull, verification: r.verification, committed: r.committed, failures: r.failures })
                   : failCarrier('bidirectional apply failed', 'maestro-sync/bidirectional', { failures: r.failures } as any);
               }
-              case 'backupStatus': {
+              case 'checkMachines': {
+                const a = (args ?? {}) as any;
+                const mode = a.mode === 'pull' || a.mode === 'push' ? a.mode : 'bidirectional';
                 try {
+                  const { localId, remoteId } = await lifecycleIds(svc);
+                  const from = typeof a.from === 'string' ? a.from : (localId ?? 'dsh-home');
+                  const to = typeof a.to === 'string' ? a.to : peerMachine(from);
+                  const verdict = checkMachines({ mode, from, to, localId, remoteId });
+                  return verdict.ok
+                    ? okCarrier({ ok: true, mode, localId, remoteId, from, to })
+                    : okCarrier({ ok: false, reason: verdict.message, mode, localId, remoteId, from, to });
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? String(e), e?.code ?? 'maestro-sync/machines');
+                }
+              }
+              case 'tunnelRestore': {
+                const a = (args ?? {}) as any;
+                if (a.confirm !== true) return failCarrier('tunnel restore requires confirm:true', 'maestro-sync/confirm');
+                const side = a.side === 'remote' ? 'remote' : 'local';
+                if (side === 'local') {
+                  const r = await restoreLocalTunnel({ profileName: typeof a.profile === 'string' ? a.profile : undefined });
+                  return r.ok
+                    ? okCarrier({ ok: true, side, profile: r.profile })
+                    : failCarrier(r.code === 'INVALID_PROFILE' ? 'tunnel profile tunnel is not a named-tunnel object' : 'no tunnel profile found', 'maestro-sync/tunnel', { side });
+                }
+                if (typeof a.profile !== 'string' || !a.profile) return failCarrier('tunnel restore --side remote requires profile', 'maestro-sync/tunnel');
+                try {
+                  const target = await svc.resolveTarget();
+                  await svc.transport.ensureAgent(target);
+                  const r = await restoreRemoteTunnel(svc.transport, target, a.profile);
+                  if (!r.ok) return failCarrier(`tunnel restore rejected: ${r.code}`, 'maestro-sync/tunnel', { side });
+                  return okCarrier({ ok: true, side, profile: r.profile, changed: r.changed });
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? String(e), e?.code ?? 'maestro-sync/tunnel', { side });
+                }
+              }
+              case 'backupStatus': {                try {
                   const bsvc = await makeBackupService();
                   const head = await bsvc.readHeadManifest();
                   const target = await resolveBackupTarget((await load().catch(() => ({ domains: {} as any }))) as any, process.env as any);
