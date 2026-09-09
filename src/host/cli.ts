@@ -16,7 +16,8 @@ import * as os from 'node:os';
 import { loadSyncConfig, type SyncConfig } from './config.js';
 import { validateHost } from './validation.js';
 import { SyncService } from './sync-service.js';
-import type { SyncDirection } from './sync-types.js';
+import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
+import type { SyncDirection, SyncScope } from './sync-types.js';
 
 interface CliDeps {
   stdout?: (s: string) => void;
@@ -25,11 +26,12 @@ interface CliDeps {
 }
 
 interface CliOpts {
-  mode: 'pull' | 'push' | null;
+  mode: 'pull' | 'push' | 'bidirectional' | null;
   dryRun: boolean;
   hasApplyFlag: boolean;
   applyPreviewId?: string;
   confirm: boolean;
+  includeSessions: boolean;
   localDsh?: string;
   remote?: string;
   remoteDsh?: string;
@@ -46,10 +48,14 @@ dsh-maestro-sync CLI — merge memory & sessions across machines
 USAGE
   node ${prog} --pull|--push [--dry-run]                 preview (default, read-only)
   node ${prog} --pull|--push --apply --preview-id ID --confirm   apply a preview
+  node ${prog} --bidirectional [--dry-run] [--include-sessions]  push-then-pull in one operation
+  node ${prog} --bidirectional --apply --preview-id ID --confirm apply it
 
 OPTIONS
   --pull                    pull merge: remote -> local
   --push                    push merge: local -> remote
+  --bidirectional           push then pull, one operation (merge strategy only)
+  --include-sessions        with --bidirectional: also sync sessions/ (default: memories only)
   --dry-run, -n             preview only (default); never writes
   --apply                   apply a previous preview — REQUIRES --preview-id and --confirm
   --preview-id <id>         preview id returned by --dry-run
@@ -76,6 +82,7 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
     dryRun: true,
     hasApplyFlag: false,
     confirm: false,
+    includeSessions: false,
     strategy: 'merge',
     ackOverride: false,
     help: false,
@@ -88,9 +95,11 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
-    if (a === '--pull' || a === '--push') {
-      if (opts.mode) return fail('Specify only one of --pull or --push');
-      opts.mode = a === '--pull' ? 'pull' : 'push';
+    if (a === '--pull' || a === '--push' || a === '--bidirectional') {
+      if (opts.mode) return fail('Specify only one of --pull, --push or --bidirectional');
+      opts.mode = a === '--pull' ? 'pull' : a === '--push' ? 'push' : 'bidirectional';
+    } else if (a === '--include-sessions') {
+      opts.includeSessions = true;
     } else if (a === '--dry-run' || a === '-n') {
       opts.dryRun = true;
     } else if (a === '--apply') {
@@ -148,11 +157,65 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
   if (opts.strategy === 'override' && !opts.ackOverride) {
     return fail('--strategy=override is destructive and requires --ack-override');
   }
+  if (opts.mode === 'bidirectional' && opts.strategy === 'override') {
+    return fail('--bidirectional requires the merge strategy (override is a one-direction destructive mirror)');
+  }
   if (opts.hasApplyFlag) {
     if (!opts.applyPreviewId) return fail('--apply requires --preview-id <id> from a previous --dry-run preview');
     if (opts.confirm !== true) return fail('--apply requires --confirm');
   }
   return opts;
+}
+
+async function runBidirectional(
+  svc: SyncService,
+  opts: CliOpts,
+  out: (s: string) => void,
+  err: (s: string) => void,
+): Promise<number> {
+  const scope: SyncScope = opts.includeSessions ? 'all' : 'memory';
+  if (opts.hasApplyFlag) {
+    err(`[sync] apply bidirectional preview ${opts.applyPreviewId} (scope ${scope})`);
+    let result;
+    try {
+      result = await runBidirectionalApply(svc, { previewId: opts.applyPreviewId!, confirm: true, scope });
+    } catch (e: any) {
+      out(JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase }) + '\n');
+      err(`[err] bidirectional apply failed: ${e?.message ?? String(e)}`);
+      return 1;
+    }
+    out(JSON.stringify({ ok: result.ok, push: result.push, pull: result.pull, verification: result.verification, committed: result.committed, failures: result.failures }) + '\n');
+    if (!result.ok) {
+      err(`[err] bidirectional partially failed: ${result.failures.map((f: any) => f.path ?? f.code).join(',')}`);
+      return 1;
+    }
+    err(`[sync] bidirectional applied: committed ${result.committed.length}, failures ${result.failures.length}`);
+    return 0;
+  }
+
+  // default: dry-run combined preview (read-only). The pull plan is projected:
+  // it is recomputed exact after the push lands at apply time.
+  err(`[sync] preview bidirectional (dry-run, scope ${scope})`);
+  let combined;
+  try {
+    combined = await runBidirectionalPreview(svc, { scope });
+  } catch (e: any) {
+    out(JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase }) + '\n');
+    err(`[err] bidirectional preview failed: ${e?.message ?? String(e)}`);
+    return 1;
+  }
+  out(
+    JSON.stringify({
+      ok: true,
+      previewId: combined.previewId,
+      expiresAt: combined.expiresAt,
+      push: { summary: combined.push.summary, actions: combined.push.actions },
+      pullProjected: { summary: combined.pullProjected.summary, actions: combined.pullProjected.actions },
+      note: 'pull plan is projected; recomputed exact at apply time',
+    }) + '\n',
+  );
+  err(`[sync] bidirectional preview ${combined.previewId}: push merged=${combined.push.summary.merged} copied=${combined.push.summary.copied} / pull merged=${combined.pullProjected.summary.merged} copied=${combined.pullProjected.summary.copied}`);
+  return 0;
 }
 
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
@@ -166,10 +229,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 0;
   }
   if (!opts.mode) {
-    err('[err] Missing required --pull or --push (see --help)');
+    err('[err] Missing required --pull, --push or --bidirectional (see --help)');
     return 1;
   }
-  const direction: SyncDirection = opts.mode;
 
   let cfg: SyncConfig;
   try {
@@ -193,6 +255,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   } else {
     svc = new SyncService({ localDsh: resolvedLocalDsh, remote: resolvedRemote, remoteDsh: resolvedRemoteDsh });
   }
+
+  if (opts.mode === 'bidirectional') {
+    return runBidirectional(svc, opts, out, err);
+  }
+  const direction: SyncDirection = opts.mode;
 
   if (opts.hasApplyFlag) {
     err(`[sync] apply ${direction} preview ${opts.applyPreviewId} (strategy ${opts.strategy})`);
