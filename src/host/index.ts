@@ -585,7 +585,7 @@ export default {
                   const r = await restoreLocalTunnel({ profileName: typeof a.profile === 'string' ? a.profile : undefined });
                   return r.ok
                     ? okCarrier({ ok: true, side, profile: r.profile })
-                    : failCarrier('no tunnel profile found', 'maestro-sync/tunnel', { side });
+                    : failCarrier(r.code === 'INVALID_PROFILE' ? 'tunnel profile tunnel is not a named-tunnel object' : 'no tunnel profile found', 'maestro-sync/tunnel', { side });
                 }
                 if (typeof a.profile !== 'string' || !a.profile) return failCarrier('tunnel restore --side remote requires profile', 'maestro-sync/tunnel');
                 try {

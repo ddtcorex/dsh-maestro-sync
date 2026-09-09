@@ -12,8 +12,11 @@
  *   from `<dshRoot>/dsh-maestro-remote/tunnel-profiles/<profile>/`
  *   `settings-tunnel.json` on the remote itself and rewrites ONLY the
  *   `domains.tunnel` value inside `<dshRoot>/maestro/settings.json`
- *   (byte-preserving regex replace of that one string value, atomic
- *   tmp+rename, mode 0600). No settings bytes ever cross the wire in
+ *   (JSON-aware object assignment, atomic tmp+rename, mode 0600). The
+ *   tunnel domain is a named-tunnel OBJECT, never a bare string — a
+ *   2026-09-09 string write clobbered the object shape and took a tunnel
+ *   down, so non-object values fail closed on both sides.
+ *   No settings bytes ever cross the wire in
  *   either direction; prints `PATCHED <sha256>` or `UNCHANGED <sha256>`.
  *   Single-writer discipline (runs post-sync, operator-serialized) plus
  *   the already-equal no-op check make expected-sha CAS unnecessary here:
@@ -82,27 +85,28 @@ if [ "$cmd" = "tunnel-patch" ]; then
   settings="$dsh_root/maestro/settings.json"
   [ -f "$profile_settings" ] || die "no tunnel profile: $profile"
   [ -f "$settings" ] || die "no settings.json under $dsh_root/maestro"
-  # Regex replace of the single "tunnel" string value keeps every other byte
-  # identical; the new value is hostname-shaped so no JSON escaping is needed.
-  # No match (escaped quotes, missing key) fails closed instead of reformatting.
+  # JSON-aware object assignment of domains.tunnel only; every other key is
+  # preserved. The profile value MUST be a named-tunnel object (mode/hostname)
+  # — a bare string fails closed instead of clobbering the object shape.
   out=$(python3 - "$profile_settings" "$settings" <<'PYEOF'
-import hashlib, os, re, sys
+import hashlib, json, os, sys
 prof_path, settings_path = sys.argv[1], sys.argv[2]
-prof_raw = open(prof_path, encoding='utf-8').read()
-m = re.search(r'"tunnel"\\s*:\\s*"([^"]*)"', prof_raw)
-if not m:
-    sys.exit('profile has no tunnel key')
-tunnel = m.group(1)
-if not re.fullmatch(r'[A-Za-z0-9.-]{1,253}', tunnel):
-    sys.exit('unsafe tunnel value')
-raw = open(settings_path, encoding='utf-8').read()
-cur = re.search(r'"tunnel"\\s*:\\s*"([^"]*)"', raw)
-if not cur:
-    sys.exit('settings has no tunnel key')
-if cur.group(1) == tunnel:
+try:
+    prof = json.load(open(prof_path, encoding='utf-8'))
+    doc = json.load(open(settings_path, encoding='utf-8'))
+except Exception as e:
+    sys.exit('invalid JSON: %s' % e)
+tunnel = (prof.get('domains') or {}).get('tunnel')
+if not isinstance(tunnel, dict) or not tunnel.get('mode') or not tunnel.get('hostname'):
+    sys.exit('profile tunnel is not a named-tunnel object')
+if not isinstance(doc.get('domains'), dict):
+    sys.exit('settings has no domains object')
+if doc['domains'].get('tunnel') == tunnel:
+    raw = open(settings_path, encoding='utf-8').read()
     print('UNCHANGED ' + hashlib.sha256(raw.encode('utf-8')).hexdigest())
 else:
-    new = raw[:cur.start(1)] + tunnel + raw[cur.end(1):]
+    doc['domains']['tunnel'] = tunnel
+    new = json.dumps(doc, indent=2) + '\\n'
     tmp = settings_path + '.tmp.' + str(os.getpid())
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w', encoding='utf-8') as f:
         f.write(new)

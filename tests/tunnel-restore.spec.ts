@@ -12,13 +12,13 @@ vi.mock('@ddtcorex/dsh-maestro-config-lib', () => ({
 
 import { restoreLocalTunnel, restoreRemoteTunnel } from '../src/host/tunnel-restore.js';
 
-function seedHome(): string {
+function seedHome(tunnel: unknown = { mode: 'named', id: 'test-id', hostname: 'dsh-home.example.com' }): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-restore-'));
   const prof = path.join(home, 'dsh-maestro-remote', 'tunnel-profiles', 'dsh-home');
   fs.mkdirSync(prof, { recursive: true });
-  fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: 'dsh-home.ddtcorex.com' } }));
+  fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel } }));
   fs.mkdirSync(path.join(home, 'maestro'), { recursive: true });
-  fs.writeFileSync(path.join(home, 'maestro', 'settings.json'), JSON.stringify({ domains: { tunnel: 'stale', jobs: { x: 1 } } }));
+  fs.writeFileSync(path.join(home, 'maestro', 'settings.json'), JSON.stringify({ domains: { tunnel: { mode: 'named', hostname: 'stale' }, jobs: { x: 1 } } }));
   return home;
 }
 
@@ -28,8 +28,16 @@ describe('restoreLocalTunnel', () => {
     const r = await restoreLocalTunnel({ dshHome: home, profileName: 'dsh-home' });
     expect(r.ok).toBe(true);
     const doc = JSON.parse(fs.readFileSync(path.join(home, 'maestro', 'settings.json'), 'utf-8'));
-    expect(doc.domains.tunnel).toBe('dsh-home.ddtcorex.com');
+    expect(doc.domains.tunnel).toEqual({ mode: 'named', id: 'test-id', hostname: 'dsh-home.example.com' });
     expect(doc.domains.jobs).toEqual({ x: 1 });
+  });
+
+  it('refuses a string tunnel value instead of clobbering the object shape', async () => {
+    const home = seedHome('dsh-home.ddtcorex.com');
+    const before = fs.readFileSync(path.join(home, 'maestro', 'settings.json'), 'utf-8');
+    const r = await restoreLocalTunnel({ dshHome: home, profileName: 'dsh-home' });
+    expect(r).toEqual({ ok: false, code: 'INVALID_PROFILE' });
+    expect(fs.readFileSync(path.join(home, 'maestro', 'settings.json'), 'utf-8')).toBe(before);
   });
 
   it('returns NO_PROFILE when the profile dir is absent', async () => {

@@ -166,15 +166,16 @@ describe('remote-agent', () => {
     try {
       const prof = path.join(remote.root, 'dsh-maestro-remote', 'tunnel-profiles', 'dsh-company');
       fs.mkdirSync(prof, { recursive: true });
-      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: 'new-company.example.com' } }));
+      const profileTunnel = { mode: 'named', id: 'remote-id', hostname: 'new-company.example.com' };
+      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: profileTunnel } }));
       const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: 'stale', jobs: { x: 1 } } }));
+      fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: { mode: 'named', hostname: 'stale' }, jobs: { x: 1 } } }));
       const res = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', 'dsh-company'], { encoding: 'utf-8' });
       expect(res.status).toBe(0);
       expect(res.stdout ?? '').toMatch(/PATCHED [0-9a-f]{64}/);
       const doc = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-      expect(doc.domains.tunnel).toBe('new-company.example.com');
+      expect(doc.domains.tunnel).toEqual(profileTunnel);
       expect(doc.domains.jobs).toEqual({ x: 1 });
     } finally {
       remote.cleanup();
@@ -186,15 +187,34 @@ describe('remote-agent', () => {
     try {
       const prof = path.join(remote.root, 'dsh-maestro-remote', 'tunnel-profiles', 'dsh-company');
       fs.mkdirSync(prof, { recursive: true });
-      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: 'same.example.com' } }));
+      const same = { mode: 'named', hostname: 'same.example.com' };
+      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: same } }));
       const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: 'same.example.com' } }));
+      fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: same } }));
       const again = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', 'dsh-company'], { encoding: 'utf-8' });
       expect(again.status).toBe(0);
       expect(again.stdout ?? '').toMatch(/UNCHANGED [0-9a-f]{64}/);
       const evil = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', '../escape'], { encoding: 'utf-8' });
       expect(evil.status).not.toBe(0);
+    } finally {
+      remote.cleanup();
+    }
+  });
+
+  it('tunnel-patch refuses a string tunnel value instead of writing it', () => {
+    const remote = makeRemote();
+    try {
+      const prof = path.join(remote.root, 'dsh-maestro-remote', 'tunnel-profiles', 'dsh-company');
+      fs.mkdirSync(prof, { recursive: true });
+      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: 'flat.example.com' } }));
+      const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      const before = JSON.stringify({ domains: { tunnel: { mode: 'named', hostname: 'keep' } } });
+      fs.writeFileSync(settingsPath, before);
+      const res = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', 'dsh-company'], { encoding: 'utf-8' });
+      expect(res.status).not.toBe(0);
+      expect(fs.readFileSync(settingsPath, 'utf-8')).toBe(before);
     } finally {
       remote.cleanup();
     }

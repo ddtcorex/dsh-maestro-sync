@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import type { SyncTransport } from './transport.js';
 import type { RemoteTarget } from './sync-types.js';
 
-export type LocalRestoreResult = { ok: true; profile: string } | { ok: false; code: 'NO_PROFILE' };
+export type LocalRestoreResult = { ok: true; profile: string } | { ok: false; code: 'NO_PROFILE' | 'INVALID_PROFILE' };
 export type RemoteRestoreResult =
   | { ok: true; profile: string; changed: boolean; sha256: string }
   | { ok: false; code: 'BAD_PROFILE' };
@@ -13,6 +13,18 @@ export type RemoteRestoreResult =
 export function isSafeProfileName(name: string): boolean {
   if (!name || name.startsWith('.') || name.includes('..') || name.includes('/')) return false;
   return /^[A-Za-z0-9._-]+$/.test(name);
+}
+
+/**
+ * The tunnel domain is a named-tunnel OBJECT (mode/hostname/...), never a
+ * bare string. A string write clobbered the object shape on 2026-09-09 and
+ * took the dsh-home tunnel down (HTTP 530) — so a non-object profile value
+ * fails closed here before anything is written.
+ */
+export function isValidTunnelDomain(v: unknown): v is Record<string, unknown> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const t = v as Record<string, unknown>;
+  return typeof t.mode === 'string' && t.mode.length > 0 && typeof t.hostname === 'string' && t.hostname.length > 0;
 }
 
 /**
@@ -64,7 +76,7 @@ export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?
     try {
       const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
       const tunnelDomain = tunnelJson?.domains?.tunnel;
-      if (!tunnelDomain) return { ok: false, code: 'NO_PROFILE' };
+      if (!isValidTunnelDomain(tunnelDomain)) return { ok: false, code: 'INVALID_PROFILE' };
       try {
         const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
         if (typeof cfgLib.set === 'function') {
