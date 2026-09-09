@@ -201,6 +201,9 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           <div data-sync-field="">
             <span data-sync-field-label="">Machines</span>
             <span data-sync-field-value="" data-testid="sync-machines">{s.machines.localId ?? '?'} ↔ {s.machines.remoteId ?? '?'}</span>
+            {s.machines.reason ? (
+              <span data-sync-field-note="" data-testid="sync-machines-error" style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>{s.machines.reason}</span>
+            ) : null}
             <Button variant="outline" size="sm" data-testid="sync-tunnel-restore" disabled={checking || busy} onClick={() => void s.handleTunnelRestore()}>
               Restore tunnel
             </Button>

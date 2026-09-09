@@ -40,7 +40,8 @@ export function useSync(ctx: any) {
   const [status, setStatus] = React.useState<any>(null)
   const [connection, setConnection] = React.useState<SyncConnection | null>(null)
   // Machine identity (loaded alongside the connection check; null = not
-  // loaded or failed — the tab never blocks on it).
+  // loaded yet — failures render inline with ok:false + reason, never null,
+  // so the line cannot vanish silently; the tab never blocks on it).
   const [machines, setMachines] = React.useState<{ localId: string | null; remoteId: string | null; from?: string; to?: string; ok?: boolean; reason?: string } | null>(null)
   // Idle until the user explicitly checks: entering the tab never probes SSH.
   const [checking, setChecking] = React.useState<boolean>(false)
@@ -327,19 +328,22 @@ export function useSync(ctx: any) {
    * Explicit connection check (the ONLY auto path is Apply's own refresh).
    * On success the target is persisted and the status/pages load, unlocking
    * Preview and the file lists; on failure everything stays gated.
-   * Machine ids load alongside (best-effort: failure clears the line but
-   * never blocks the tab).
+   * Machine ids load alongside (best-effort: a failure renders the line with
+   * "?" ids plus the reason inline, never blocking the tab and never
+   * vanishing silently — a vanished line is indistinguishable from stale UI).
    */
   const loadMachines = React.useCallback(async (): Promise<void> => {
     try {
       const res: any = await call('checkMachines', {})
       if (res && typeof res === 'object' && (res.localId !== undefined || res.remoteId !== undefined)) {
-        setMachines({ localId: res.localId ?? null, remoteId: res.remoteId ?? null, from: res.from, to: res.to, ok: res.ok, reason: res.reason })
+        setMachines({ localId: res.localId ?? null, remoteId: res.remoteId ?? null, from: res.from, to: res.to, ok: res.ok, reason: res.reason ?? res.error })
+      } else if (res && typeof res === 'object' && (res.ok === false || typeof res.reason === 'string' || typeof res.error === 'string')) {
+        setMachines({ localId: res.localId ?? null, remoteId: res.remoteId ?? null, from: res.from, to: res.to, ok: false, reason: typeof res.reason === 'string' ? res.reason : String(res.error ?? 'machines check failed') })
       } else {
         setMachines(null)
       }
-    } catch {
-      setMachines(null)
+    } catch (e: any) {
+      setMachines({ localId: null, remoteId: null, ok: false, reason: e?.message ?? String(e) })
     }
   }, [call])
 
