@@ -15,6 +15,7 @@ import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
 import { validateHost } from './validation.js';
 import type { PreviewJobState } from './sync-types.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
+import { restoreLocalTunnel } from './tunnel-restore.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
 
@@ -41,73 +42,12 @@ function failCarrier(message: string, code = 'maestro-sync/rpc', details: Record
 
 /**
  * Best-effort tunnel profile restore after a confirmed apply.
- * Mirrors sync-harness.sh apply_local_tunnel_profile: re-patches
- * maestro/settings.json domains.tunnel from this machine's own profile dir.
- * Never throws; profile may not exist on CI.
+ * Delegates to the shared tunnel-restore module (local side only here;
+ * remote restore is an explicit tool/RPC, never implicit).
+ * Never throws; profiles may not exist on CI.
  */
 async function restoreTunnelProfile(): Promise<void> {
-  try {
-    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
-    const profilesRoot = path.join(dshHome, 'dsh-maestro-remote', 'tunnel-profiles');
-    if (!fs.existsSync(profilesRoot)) return;
-    let profiles: string[] = [];
-    try {
-      profiles = fs.readdirSync(profilesRoot).filter((n) => {
-        try {
-          return fs.statSync(path.join(profilesRoot, n)).isDirectory();
-        } catch {
-          return false;
-        }
-      });
-    } catch {
-      return;
-    }
-    if (profiles.length === 0) return;
-
-    const envProfile = process.env.LOCAL_TUNNEL_PROFILE || process.env.TUNNEL_PROFILE;
-    const profileName = envProfile && profiles.includes(envProfile) ? envProfile : profiles[0];
-    if (!profileName) return;
-
-    const profileDir = path.join(profilesRoot, profileName);
-    const tunnelSettingsPath = path.join(profileDir, 'settings-tunnel.json');
-    const cloudflaredSrc = path.join(profileDir, 'cloudflared-config.yml');
-    const cloudflaredDst = path.join(dshHome, 'dsh-maestro-remote', 'cloudflared-config.yml');
-    const settingsPath = path.join(dshHome, 'maestro', 'settings.json');
-
-    if (!fs.existsSync(tunnelSettingsPath) || !fs.existsSync(settingsPath)) return;
-
-    try {
-      if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {
-        fs.copyFileSync(cloudflaredSrc, cloudflaredDst);
-        try {
-          fs.chmodSync(cloudflaredDst, 0o600);
-        } catch {}
-      }
-    } catch {}
-
-    try {
-      const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
-      const tunnelDomain = tunnelJson?.domains?.tunnel;
-      if (!tunnelDomain) return;
-      try {
-        const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
-        if (typeof cfgLib.set === 'function') {
-          await cfgLib.set('tunnel', tunnelDomain);
-          return;
-        }
-      } catch {}
-      const raw = fs.readFileSync(settingsPath, 'utf-8');
-      const doc = JSON.parse(raw);
-      doc.domains = doc.domains || {};
-      doc.domains.tunnel = tunnelDomain;
-      const tmp = settingsPath + '.tmp.' + Math.random().toString(16).slice(2, 6);
-      fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf-8');
-      fs.renameSync(tmp, settingsPath);
-      try {
-        fs.chmodSync(settingsPath, 0o600);
-      } catch {}
-    } catch {}
-  } catch {}
+  await restoreLocalTunnel();
 }
 
 function textTool(name: string, description: string, params: Record<string, any>, execute: (args: any) => Promise<string>) {
