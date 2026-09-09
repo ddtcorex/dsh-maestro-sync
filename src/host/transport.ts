@@ -32,6 +32,14 @@ export interface SyncTransport {
   ensureAgent(target: RemoteTarget): Promise<void>;
   /** Run the fixed remote helper with `operationId`; the JSONL manifest is the only input. */
   commit(target: RemoteTarget, operationId: string, manifest: Buffer): Promise<void>;
+  /** Read `<root>/machine-id` via the fixed helper; null when missing/unreadable (lenient unknown). */
+  readMachineId(target: RemoteTarget): Promise<string | null>;
+  /**
+   * Rewrite only `domains.tunnel` in the remote settings from the named
+   * profile via the fixed helper. No settings bytes cross the wire.
+   * Caller runs `ensureAgent` first. Returns changed flag + new settings sha.
+   */
+  patchRemoteTunnel(target: RemoteTarget, profile: string): Promise<{ changed: boolean; sha256: string }>;
 }
 
 function failure(phase: SyncPhase, code: string, detail: string, path?: string): SyncFailure {
@@ -184,6 +192,45 @@ export class SshRsyncTransport implements SyncTransport {
       const code = stderr.includes('CONCURRENT_MODIFICATION') ? 'CONCURRENT_MODIFICATION' : 'COMMIT_FAILED';
       throw Object.assign(new Error(`commit failed: ${stderr || `exit ${result.exitCode}`}`), failure('publish', code, stderr || `exit ${result.exitCode}`));
     }
+  }
+
+  async readMachineId(target: RemoteTarget): Promise<string | null> {
+    const validated = validateRemoteTarget(target);
+    // Read-only preflight: no ensureAgent here (that mutates the remote);
+    // a missing helper fails the run and resolves to lenient unknown.
+    try {
+      const result = await this.runner.run(
+        'ssh',
+        [validated.host, `${validated.dshRoot}/${REMOTE_AGENT_REL}`, 'machine-id'],
+        { timeoutMs: 8000 },
+      );
+      if (result.exitCode !== 0) return null;
+      const id = result.stdout.toString('utf-8').trim();
+      return id.length > 0 ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async patchRemoteTunnel(target: RemoteTarget, profile: string): Promise<{ changed: boolean; sha256: string }> {
+    const validated = validateRemoteTarget(target);
+    // Fixed protocol command: profile is a validated name, never a path.
+    // Caller runs ensureAgent first (same contract as commit).
+    const result = await this.runner.run(
+      'ssh',
+      [validated.host, `${validated.dshRoot}/${REMOTE_AGENT_REL}`, 'tunnel-patch', profile],
+      { timeoutMs: 15000 },
+    );
+    const line = result.stdout.toString('utf-8').trim();
+    const m = /^(PATCHED|UNCHANGED) ([0-9a-f]{64})$/.exec(line);
+    if (result.exitCode !== 0 || !m) {
+      const stderr = result.stderr.toString('utf-8');
+      throw Object.assign(
+        new Error(`tunnel patch failed: ${stderr || line || `exit ${result.exitCode}`}`),
+        failure('publish', 'TUNNEL_PATCH_FAILED', stderr || line || `exit ${result.exitCode}`),
+      );
+    }
+    return { changed: m[1] === 'PATCHED', sha256: m[2]! };
   }
 }
 

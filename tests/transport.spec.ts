@@ -78,4 +78,23 @@ describe('transport', () => {
     expect(out[1]!.sha256).toBe('b'.repeat(64));
     expect((runner.run as any).mock.calls[0][0]).toBe('ssh');
   });
+
+  it('readMachineId trims agent output and returns null on failure', async () => {
+    const run = vi.fn(async () => ({ stdout: Buffer.from('dsh-company\n'), stderr: Buffer.alloc(0), exitCode: 0 }));
+    const transport = new SshRsyncTransport({ run } as any);
+    expect(await transport.readMachineId({ host: 'sync-host', dshRoot: '/home/kai/.dsh' })).toBe('dsh-company');
+    expect(run).toHaveBeenCalledWith('ssh', expect.arrayContaining(['sync-host', '/home/kai/.dsh/.maestro-sync/bin/maestro-sync-commit', 'machine-id']), expect.anything());
+    const failing = new SshRsyncTransport({ run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('x'), exitCode: 1 })) } as any);
+    expect(await failing.readMachineId({ host: 'sync-host', dshRoot: '/home/kai/.dsh' })).toBeNull();
+  });
+
+  it('patchRemoteTunnel parses PATCHED/UNCHANGED and throws otherwise', async () => {
+    const sha = 'a'.repeat(64);
+    const ok = new SshRsyncTransport({ run: vi.fn(async () => ({ stdout: Buffer.from(`PATCHED ${sha}\n`), stderr: Buffer.alloc(0), exitCode: 0 })) } as any);
+    expect(await ok.patchRemoteTunnel({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, 'dsh-company')).toEqual({ changed: true, sha256: sha });
+    const same = new SshRsyncTransport({ run: vi.fn(async () => ({ stdout: Buffer.from(`UNCHANGED ${sha}\n`), stderr: Buffer.alloc(0), exitCode: 0 })) } as any);
+    expect(await same.patchRemoteTunnel({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, 'dsh-company')).toEqual({ changed: false, sha256: sha });
+    const bad = new SshRsyncTransport({ run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('nope'), exitCode: 1 })) } as any);
+    await expect(bad.patchRemoteTunnel({ host: 'sync-host', dshRoot: '/home/kai/.dsh' }, 'dsh-company')).rejects.toThrow();
+  });
 });
