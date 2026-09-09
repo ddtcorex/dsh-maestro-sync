@@ -39,6 +39,9 @@ export function useSync(ctx: any) {
   })
   const [status, setStatus] = React.useState<any>(null)
   const [connection, setConnection] = React.useState<SyncConnection | null>(null)
+  // Machine identity (loaded alongside the connection check; null = not
+  // loaded or failed — the tab never blocks on it).
+  const [machines, setMachines] = React.useState<{ localId: string | null; remoteId: string | null; from?: string; to?: string; ok?: boolean; reason?: string } | null>(null)
   // Idle until the user explicitly checks: entering the tab never probes SSH.
   const [checking, setChecking] = React.useState<boolean>(false)
   const [busy, setBusy] = React.useState<boolean>(false)
@@ -324,7 +327,22 @@ export function useSync(ctx: any) {
    * Explicit connection check (the ONLY auto path is Apply's own refresh).
    * On success the target is persisted and the status/pages load, unlocking
    * Preview and the file lists; on failure everything stays gated.
+   * Machine ids load alongside (best-effort: failure clears the line but
+   * never blocks the tab).
    */
+  const loadMachines = React.useCallback(async (): Promise<void> => {
+    try {
+      const res: any = await call('checkMachines', {})
+      if (res && typeof res === 'object' && (res.localId !== undefined || res.remoteId !== undefined)) {
+        setMachines({ localId: res.localId ?? null, remoteId: res.remoteId ?? null, from: res.from, to: res.to, ok: res.ok, reason: res.reason })
+      } else {
+        setMachines(null)
+      }
+    } catch {
+      setMachines(null)
+    }
+  }, [call])
+
   const checkConnection = React.useCallback(async (): Promise<boolean> => {
     setError('')
     setResult(null)
@@ -339,6 +357,7 @@ export function useSync(ctx: any) {
       setConnection(conn)
       if (typeof res?.remoteHost === 'string' && res.remoteHost) setRemoteHost(res.remoteHost)
       await loadStatus()
+      await loadMachines()
       return true
     } catch (e: any) {
       setConnection({ ok: false, host: remoteHost, error: e?.message ?? String(e) })
@@ -346,7 +365,25 @@ export function useSync(ctx: any) {
     } finally {
       setChecking(false)
     }
-  }, [call, loadStatus, remoteHost])
+  }, [call, loadStatus, loadMachines, remoteHost])
+
+  /**
+   * Explicit local tunnel restore (confirm-first via the RPC flag).
+   * Surfaces the patched profile in the result notice.
+   */
+  const handleTunnelRestore = React.useCallback(async (): Promise<void> => {
+    setError('')
+    try {
+      const res: any = await call('tunnelRestore', { side: 'local', confirm: true })
+      if (res && res.ok) {
+        setResult({ kind: 'tunnel-restore', ok: true, text: `Tunnel restored from profile ${res.profile ?? 'auto'} (local)` })
+      } else {
+        setError(res?.error ?? 'tunnel restore failed')
+      }
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    }
+  }, [call, setError, setResult])
 
   React.useEffect(() => {
     if (!confirmOpen && !biConfirmOpen) return
@@ -366,6 +403,7 @@ export function useSync(ctx: any) {
     lastSync,
     status,
     connection,
+    machines,
     checking,
     busy,
     result,
@@ -385,6 +423,8 @@ export function useSync(ctx: any) {
     loadPage,
     saveRemoteHost,
     checkConnection,
+    loadMachines,
+    handleTunnelRestore,
     handlePreview,
     handleApply,
     cancelDialog,
