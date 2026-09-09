@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { SyncService } from '../src/host/sync-service.js';
+import { SshRsyncTransport } from '../src/host/transport.js';
 
 async function bootPlugin(extra: any = {}) {
   const register = vi.fn(() => () => {});
@@ -255,5 +256,42 @@ describe('host', () => {
       if (prevHome === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = prevHome;
     }
+  });
+
+  it('registers check_machines and tunnel_restore tools', async () => {
+    const { register } = await bootPlugin();
+    const names = register.mock.calls.map((call: any[]) => call[0].name);
+    expect(names).toContain('maestro_sync_check_machines');
+    expect(names).toContain('maestro_sync_tunnel_restore');
+  });
+
+  it('checkMachines RPC returns ids without side effects', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const prevHome = process.env.DSH_HOME;
+    const home = mkdtempSync(join(tmpdir(), 'sync-machines-'));
+    writeFileSync(join(home, 'machine-id'), 'dsh-home\n');
+    process.env.DSH_HOME = home;
+    const targetSpy = vi.spyOn(SyncService.prototype, 'resolveTarget').mockResolvedValue({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
+    const idSpy = vi.spyOn(SshRsyncTransport.prototype, 'readMachineId').mockResolvedValue('dsh-company');
+    try {
+      const { rpcHandler } = await bootPlugin();
+      const res = await rpcHandler('checkMachines', { from: 'dsh-home', to: 'dsh-company' });
+      expect(res.ok).toBe(true);
+      expect(res.value).toMatchObject({ ok: true, localId: 'dsh-home', remoteId: 'dsh-company' });
+    } finally {
+      targetSpy.mockRestore();
+      idSpy.mockRestore();
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+    }
+  });
+
+  it('tunnelRestore RPC requires confirm:true', async () => {
+    const { rpcHandler } = await bootPlugin();
+    const res = await rpcHandler('tunnelRestore', { side: 'local' });
+    expect(res.ok).toBe(false);
+    expect(res.error.code).toBe('maestro-sync/confirm');
   });
 });
