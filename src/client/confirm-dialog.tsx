@@ -20,8 +20,14 @@ export function ConfirmDialog(props: {
   kind?: 'sync' | 'backup' | 'restore' | 'gc'
   title?: string
   targetLabel?: string
+  /** Bidirectional flow: second plan section rendered below the primary one. */
+  projectedTitle?: string
+  projectedPreview?: any
+  projectedNote?: string
+  /** Bidirectional flow: apply button label override. */
+  applyLabel?: string
 }): React.ReactElement {
-  const { preview, previewDirection, remoteHost, busy, actionLimit, planAgeSecs, onShowMore, onCancel, onApply, title, targetLabel } = props
+  const { preview, previewDirection, remoteHost, busy, actionLimit, planAgeSecs, onShowMore, onCancel, onApply, title, targetLabel, projectedTitle, projectedPreview, projectedNote, applyLabel } = props
   const actions = (preview?.actions ?? []).slice(0, actionLimit)
   const hasMore = (preview?.actions?.length ?? 0) > actionLimit
   const summary = preview?.summary ?? {}
@@ -87,10 +93,34 @@ export function ConfirmDialog(props: {
           ) : null}
         </div>
 
+        {projectedPreview ? (
+          <div data-sync-planlist="" data-testid="sync-projected-plan">
+            <div data-sync-planlist-title="">{projectedTitle ?? 'Pull plan (projected)'}</div>
+            {projectedNote ? <div data-sync-planlist-note="">{projectedNote}</div> : null}
+            {((projectedPreview?.actions ?? []) as any[]).slice(0, actionLimit).map((a: any) => {
+              const f = formatFile(a.path)
+              return (
+                <div key={a.path} data-action-row="" title={a.path} data-sync-planrow="">
+                  <span data-sync-planfile-icon="" style={{ color: 'var(--dsw-alias-label-tertiary)' }}>
+                    <Icon name={f.icon} />
+                  </span>
+                  <span data-sync-planfile="">
+                    <span data-sync-planfile-title="">{f.title} — {actionLabel(a)}</span>
+                    <span data-sync-planfile-path="">{a.path}</span>
+                  </span>
+                  <span data-sync-planrow-meta="">
+                    <span data-sync-badge="" data-tone={actionTone(a)}>{a.reason ?? a.action}</span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+
         <div data-sync-dialog-actions="">
           <Button variant="outline" onClick={onCancel} disabled={busy} aria-label="Cancel">Cancel</Button>
-          <Button variant="primary" onClick={onApply} disabled={busy} busy={busy} aria-label={`Apply ${previewDirection}`}>
-            {busy ? 'Applying…' : `Apply ${previewDirection} — ${summary.copied ?? 0} copy, ${summary.merged ?? 0} merge`}
+          <Button variant="primary" onClick={onApply} disabled={busy} busy={busy} aria-label={applyLabel ?? `Apply ${previewDirection}`}>
+            {busy ? 'Applying…' : (applyLabel ?? `Apply ${previewDirection} — ${summary.copied ?? 0} copy, ${summary.merged ?? 0} merge`)}
           </Button>
         </div>
       </div>

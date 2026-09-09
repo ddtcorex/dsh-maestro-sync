@@ -16,7 +16,7 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)
   const b = useBackupTarget(props.ctx)
   const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
-  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, actionLimit, pages } = s
+  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, biPreview, biConfirmOpen, actionLimit, pages } = s
   const st = b.status
 
   const isConnected = connection?.ok === true
@@ -226,6 +226,9 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
 
       {/* Primary actions — sticky bottom bar on mobile (thumb reach) */}
       <div data-sync-actions="" data-sync-actions-bar="">
+        <Button variant="primary" icon="swap" disabled={!canSync} data-testid="sync-both-ways" onClick={() => void s.handleBidirectionalPreview()}>
+          {busy ? 'Working…' : 'Sync both ways'}
+        </Button>
         <Button variant="outline" icon="download" disabled={!canSync} data-testid="sync-preview-pull" onClick={() => void s.handlePreview('pull')}>
           {busy ? 'Working…' : 'Preview Pull'}
         </Button>
@@ -312,6 +315,26 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           onShowMore={() => s.setActionLimit((n: number) => n + 5)}
           onCancel={s.cancelDialog}
           onApply={() => void s.handleApply()}
+        />
+      ) : null}
+
+      {/* Bidirectional dialog — exact push plan plus the projected pull plan */}
+      {biConfirmOpen && biPreview ? (
+        <ConfirmDialog
+          preview={biPreview.push}
+          previewDirection="push"
+          remoteHost={remoteHost}
+          busy={busy}
+          actionLimit={actionLimit}
+          planAgeSecs={Math.max(0, Math.round((new Date(biPreview.expiresAt).getTime() - Date.now()) / 1000))}
+          onShowMore={() => s.setActionLimit((n: number) => n + 5)}
+          onCancel={s.cancelBidirectionalDialog}
+          onApply={() => void s.handleBidirectionalApply()}
+          title={`Apply both ways — preview ${String(biPreview.previewId ?? '').slice(0, 8)}`}
+          projectedTitle="Pull plan (projected)"
+          projectedPreview={biPreview.pullProjected}
+          projectedNote="Projected — recomputed exact after the push lands."
+          applyLabel="Apply both ways"
         />
       ) : null}
 
