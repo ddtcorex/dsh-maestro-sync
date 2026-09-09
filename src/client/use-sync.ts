@@ -47,6 +47,10 @@ export function useSync(ctx: any) {
   const [preview, setPreview] = React.useState<any>(null)
   const [previewDirection, setPreviewDirection] = React.useState<'pull' | 'push'>('pull')
   const [confirmOpen, setConfirmOpen] = React.useState(false)
+  // Bidirectional round trip: one combined preview (exact push + projected
+  // pull), one confirmation, one server-side push-then-pull apply.
+  const [biPreview, setBiPreview] = React.useState<any>(null)
+  const [biConfirmOpen, setBiConfirmOpen] = React.useState(false)
   const [actionLimit, setActionLimit] = React.useState(5)
   const [progress, setProgress] = React.useState<{ phase: string; current: number; total: number; file?: string } | null>(null)
   const cancelledRef = React.useRef(false)
@@ -224,6 +228,74 @@ export function useSync(ctx: any) {
     setPreview(null)
   }, [])
 
+  const handleBidirectionalPreview = React.useCallback(async () => {
+    setBusy(true)
+    setError('')
+    setResult(null)
+    setActionLimit(5)
+    setProgress({ phase: 'planning', current: 0, total: 1 })
+    try {
+      const combined: any = await call('bidirectionalPreview', {})
+      if (combined?.ok === false) {
+        setError(combined?.error ?? 'Bidirectional preview failed')
+        return
+      }
+      if (!combined?.previewId) {
+        setError('Bidirectional preview finished without a result')
+        return
+      }
+      setBiPreview(combined)
+      setBiConfirmOpen(true)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
+      setProgress(null)
+    }
+  }, [call])
+
+  const handleBidirectionalApply = React.useCallback(async () => {
+    if (!biPreview?.previewId) return
+    setBusy(true)
+    setError('')
+    const previewId = biPreview.previewId
+    try {
+      // One RPC runs push, then pull, then the convergence check server-side;
+      // the dialog busy state covers both phases ("Applying both ways…").
+      const res: any = await call('bidirectionalApply', { previewId, confirm: true })
+      setBiConfirmOpen(false)
+      setBiPreview(null)
+      if (res?.ok === false) {
+        const label = typeof res.code === 'string' ? res.code : 'apply failed'
+        setError(`${label}: ${res?.error ?? 'apply failed'}`)
+        setResult({ kind: 'bidirectional', ok: false, text: 'Both-ways apply failed' })
+        return
+      }
+      const pushAdded = res?.push?.summary?.added ?? 0
+      const pullAdded = res?.pull?.summary?.added ?? 0
+      const verification = res?.verification
+      const converged = verification && (verification.copied ?? 0) === 0 && (verification.merged ?? 0) === 0 && (verification.conflicts ?? 0) === 0
+      setResult({
+        kind: 'bidirectional',
+        ok: true,
+        text: `Both ways applied — push +${pushAdded}, pull +${pullAdded} entries · ${converged ? 'converged' : 'remaining delta, review and re-run'}`,
+      })
+      persistLastSync(new Date().toISOString())
+      void loadStatus()
+    } catch (e: any) {
+      setBiConfirmOpen(false)
+      setBiPreview(null)
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [biPreview, call, loadStatus, persistLastSync])
+
+  const cancelBidirectionalDialog = React.useCallback(() => {
+    setBiConfirmOpen(false)
+    setBiPreview(null)
+  }, [])
+
   /** Persist the SSH target to the settings store (no probing). */
   const saveRemoteHost = React.useCallback(
     async (host: string): Promise<{ ok: boolean; error?: string }> => {
@@ -277,13 +349,16 @@ export function useSync(ctx: any) {
   }, [call, loadStatus, remoteHost])
 
   React.useEffect(() => {
-    if (!confirmOpen) return
+    if (!confirmOpen && !biConfirmOpen) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelDialog()
+      if (e.key === 'Escape') {
+        cancelDialog()
+        cancelBidirectionalDialog()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [confirmOpen, cancelDialog])
+  }, [confirmOpen, biConfirmOpen, cancelDialog, cancelBidirectionalDialog])
 
   return {
     remoteHost,
@@ -298,6 +373,8 @@ export function useSync(ctx: any) {
     preview,
     previewDirection,
     confirmOpen,
+    biPreview,
+    biConfirmOpen,
     actionLimit,
     progress,
     pages,
@@ -311,6 +388,9 @@ export function useSync(ctx: any) {
     handlePreview,
     handleApply,
     cancelDialog,
+    handleBidirectionalPreview,
+    handleBidirectionalApply,
+    cancelBidirectionalDialog,
   }
 }
 

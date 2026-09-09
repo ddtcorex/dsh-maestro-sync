@@ -14,6 +14,7 @@ import { resolveBackupTarget, validateR2ConfigInput, type NormalizedR2Config } f
 import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
 import { validateHost } from './validation.js';
 import type { PreviewJobState } from './sync-types.js';
+import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
 
@@ -193,6 +194,58 @@ export default {
               const r = await svc.apply({ previewId, direction: direction === 'push' ? 'push' : 'pull', confirm: true });
               if (r.ok) await restoreTunnelProfile();
               return JSON.stringify({ ok: r.ok, revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures });
+            } catch (e: any) {
+              return JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase });
+            }
+          },
+        ),
+      ),
+    );
+
+    // maestro_sync_bidirectional_preview — read-only combined plan (exact push + projected pull)
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_bidirectional_preview',
+          'Preview a push-then-pull round trip (read-only: exact push plan + projected pull plan).',
+          { includeSessions: { type: 'boolean', description: 'also sync sessions/ (default: memories only)' } },
+          async (a) => {
+            const svc = await makeService();
+            const scope = a?.includeSessions === true ? 'all' : 'memory';
+            const combined = await runBidirectionalPreview(svc, { scope });
+            return JSON.stringify({
+              ok: true,
+              previewId: combined.previewId,
+              expiresAt: combined.expiresAt,
+              push: { summary: combined.push.summary, actions: combined.push.actions },
+              pullProjected: { summary: combined.pullProjected.summary, actions: combined.pullProjected.actions },
+              note: 'pull plan is projected; recomputed exact at apply time',
+            });
+          },
+        ),
+      ),
+    );
+
+    // maestro_sync_bidirectional_apply — the only bidirectional mutation route
+    ctx.effect(() =>
+      ctx.tools.register(
+        textTool(
+          'maestro_sync_bidirectional_apply',
+          'Apply a previously previewed bidirectional plan. Requires previewId and confirm:true.',
+          {
+            previewId: { type: 'string', description: 'preview id returned by bidirectional preview' },
+            confirm: { type: 'boolean', description: 'must be true' },
+            includeSessions: { type: 'boolean', description: 'must match the preview scope' },
+          },
+          async (a) => {
+            if (a?.confirm !== true) return JSON.stringify({ ok: false, error: 'bidirectional apply requires confirm:true' });
+            if (!a?.previewId || typeof a.previewId !== 'string') return JSON.stringify({ ok: false, error: 'bidirectional apply requires previewId' });
+            const svc = await makeService();
+            try {
+              const scope = a?.includeSessions === true ? 'all' : 'memory';
+              const r = await runBidirectionalApply(svc, { previewId: a.previewId, confirm: true, scope });
+              if (r.ok) await restoreTunnelProfile();
+              return JSON.stringify({ ok: r.ok, push: r.push, pull: r.pull, verification: r.verification, committed: r.committed, failures: r.failures });
             } catch (e: any) {
               return JSON.stringify({ ok: false, error: e?.message ?? String(e), code: e?.code, phase: e?.phase });
             }
@@ -467,6 +520,28 @@ export default {
                 const r = await svc.apply({ previewId, direction, confirm: true });
                 if (r.ok) await restoreTunnelProfile();
                 return okCarrier({ revision: r.revision, summary: r.summary, committed: r.committed, failures: r.failures });
+              }
+              case 'bidirectionalPreview': {
+                const scope = args && (args as any).includeSessions === true ? 'all' : 'memory';
+                const combined = await runBidirectionalPreview(svc, { scope });
+                return okCarrier({
+                  previewId: combined.previewId,
+                  expiresAt: combined.expiresAt,
+                  push: combined.push,
+                  pullProjected: combined.pullProjected,
+                  note: 'pull plan is projected; recomputed exact at apply time',
+                });
+              }
+              case 'bidirectionalApply': {
+                const { previewId, confirm } = (args ?? {}) as any;
+                if (confirm !== true) return failCarrier('bidirectional apply requires confirm:true', 'maestro-sync/confirm');
+                if (!previewId || typeof previewId !== 'string') return failCarrier('bidirectional apply requires previewId');
+                const scope = args && (args as any).includeSessions === true ? 'all' : 'memory';
+                const r = await runBidirectionalApply(svc, { previewId, confirm: true, scope });
+                if (r.ok) await restoreTunnelProfile();
+                return r.ok
+                  ? okCarrier({ ok: true, push: r.push, pull: r.pull, verification: r.verification, committed: r.committed, failures: r.failures })
+                  : failCarrier('bidirectional apply failed', 'maestro-sync/bidirectional', { failures: r.failures } as any);
               }
               case 'backupStatus': {
                 try {

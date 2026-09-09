@@ -97,3 +97,6 @@ export interface ApplyRequest {
   direction: SyncDirection;
   confirm: true;
 }
+
+/** Inventory scope: 'memory' covers dsh-maestro-memory only, 'all' adds sessions/. */
+export type SyncScope = 'memory' | 'all';

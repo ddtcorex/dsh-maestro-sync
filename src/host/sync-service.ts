@@ -26,18 +26,20 @@ import { loadIndex, saveIndex, probeIndex, matchesStat, statFingerprint } from '
 import type { RemoteManifestEntry } from './remote-manifest.js';
 import { buildPlan, buildPreview, getPreview, getPreviewDirection, deletePreview, storePreview } from './sync-plan.js';
 import { normalizeEligiblePath, validateRemoteTarget, validateHost } from './validation.js';
-import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction, SyncProgress } from './sync-types.js';
+import type { RemoteTarget, SyncDirection, SyncPreview, SyncSummary, SyncFailure, SyncPlan, FileSnapshot, PlannedAction, SyncProgress, SyncScope } from './sync-types.js';
 import { createProcessRunner, type ProcessRunner } from './process-runner.js';
 import { createTransport, type SyncTransport } from './transport.js';
 
 export interface PreviewRequest {
   direction: SyncDirection;
+  scope?: SyncScope;
 }
 
 export interface ApplyRequest {
   previewId: string;
   direction: SyncDirection;
   confirm: true;
+  scope?: SyncScope;
 }
 
 export interface ApplyResult {
@@ -256,7 +258,7 @@ export class SyncService {
    * re-hashed at write time (see apply), so a stale cache can never publish a
    * wrong mutation target.
    */
-  private async snapshotBoth(opts: { sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean } = {}): Promise<{
+  private async snapshotBoth(opts: { scope?: SyncScope; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean } = {}): Promise<{
     target: RemoteTarget;
     localSnapshots: FileSnapshot[];
     remoteSnapshots: FileSnapshot[];
@@ -272,8 +274,11 @@ export class SyncService {
     const fsMod = this.fs;
     const target = await this.requireTarget();
     stop();
-    const localPaths = this.listLocalFiles();
-    const remoteManifest = await this.transport.manifest(target);
+    // Scope filter: 'memory' covers dsh-maestro-memory only and skips the
+    // live session logs; undefined/'all' preserves the legacy full inventory.
+    const inScope = (p: string): boolean => opts.scope !== 'memory' || !p.startsWith('sessions/');
+    const localPaths = this.listLocalFiles().filter(inScope);
+    const remoteManifest = (await this.transport.manifest(target)).filter((e) => inScope(e.path));
     stop();
     const remoteSnapshots = remoteManifest.map((e) => ({ path: e.path, sha256: e.sha256, size: e.size, kind: kindForPath(e.path) }));
     const remoteSet = new Set(remoteManifest.map((e) => e.path));
@@ -446,14 +451,15 @@ export class SyncService {
     }
   }
 
-  async preview(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
+  async preview(opts: { direction: SyncDirection; scope?: SyncScope; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
     return this.withMux(() => this.previewInner(opts));
   }
 
-  private async previewInner(opts: { direction: SyncDirection; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
+  private async previewInner(opts: { direction: SyncDirection; scope?: SyncScope; sessionsCountOnly?: boolean; onProgress?: (p: SyncProgress) => void; shouldStop?: () => boolean }): Promise<PreviewResult> {
     const direction: SyncDirection = opts.direction === 'push' ? 'push' : 'pull';
     const connection = await this.requireConnection();
     const { localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth({
+      scope: opts.scope,
       sessionsCountOnly: opts.sessionsCountOnly,
       onProgress: opts.onProgress,
       shouldStop: opts.shouldStop,
@@ -601,7 +607,7 @@ export class SyncService {
     }
     await this.requireConnection();
 
-    const { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth();
+    const { target, localSnapshots, remoteSnapshots, localContents, remoteContents, cleanup } = await this.snapshotBoth({ scope: req.scope });
     try {
       const fresh = await buildPlan(localSnapshots, remoteSnapshots, req.direction, localContents, remoteContents);
 

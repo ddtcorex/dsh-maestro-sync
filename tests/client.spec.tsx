@@ -237,6 +237,51 @@ describe('SyncPanel', () => {
     expect(screen.getByTestId('r2-preview-backup')).toBeDisabled();
   });
 
+  it('Sync both ways opens a combined dialog (exact push + projected pull) and applies once', async () => {
+    const user = userEvent.setup();
+    const pushPreview = makePreview([
+      { path: 'dsh-maestro-memory/daily/2026-09-09.md', action: 'merge', target: 'remote', added: 2, reason: 'content differs' },
+    ]);
+    const combined = {
+      ok: true,
+      previewId: PREVIEW_ID,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      push: pushPreview,
+      pullProjected: makePreview(),
+      note: 'pull plan is projected; recomputed exact at apply time',
+    };
+    const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
+      if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 0, remoteOnly: 0, both: 0 });
+      if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
+      const cf = checkFlowBranches(method);
+      if (cf) return cf;
+      if (method === 'bidirectionalPreview') return carrier(combined);
+      if (method === 'bidirectionalApply') {
+        expect(args).toMatchObject({ previewId: PREVIEW_ID, confirm: true });
+        return carrier({ ok: true, push: { summary }, pull: { summary }, verification: { copied: 0, merged: 0, skipped: 3, conflicts: 0, added: 0 }, committed: ['dsh-maestro-memory/daily/2026-09-09.md'], failures: [] });
+      }
+      return { ok: true };
+    });
+    render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
+    await driveCheck(user);
+
+    await waitFor(() => expect(screen.getByTestId('sync-both-ways')).toBeEnabled());
+    await user.click(screen.getByTestId('sync-both-ways'));
+
+    // combined dialog: exact push file plus the projected-pull honesty note
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toContain('2026-09-09.md');
+    expect(dialog.textContent).toMatch(/projected/i);
+    expect(statusCalls(rpc)).not.toContain('bidirectionalApply');
+
+    await user.click(screen.getByRole('button', { name: /apply both ways/i }));
+    await waitFor(() => expect(statusCalls(rpc)).toContain('bidirectionalApply'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // success announced with the convergence verdict
+    const statuses = screen.getAllByRole('status');
+    expect(statuses.some((el) => /converged/i.test(el.textContent ?? ''))).toBe(true);
+  });
+
   it('primary actions live in a sticky thumb-reach bar', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {

@@ -106,4 +106,57 @@ describe('cli', () => {
     const code2 = await runCli(['--pull', '--dry-run', '--strategy', 'override', '--ack-override'], { stdout: c2.out, stderr: c2.err, makeService: m2.factory });
     expect(code2).toBe(0);
   });
+
+  it('--bidirectional is mutually exclusive with --pull/--push', async () => {
+    const c = capture();
+    const m = makeService();
+    const code = await runCli(['--bidirectional', '--pull'], { stdout: c.out, stderr: c.err, makeService: m.factory });
+    expect(code).toBe(1);
+    expect(c.stderr()).toMatch(/only one/i);
+    expect(m.preview).not.toHaveBeenCalled();
+    expect(m.apply).not.toHaveBeenCalled();
+  });
+
+  it('--bidirectional preview prints exact push plus projected pull plans', async () => {
+    const c = capture();
+    const m = makeService();
+    const code = await runCli(['--bidirectional', '--dry-run'], { stdout: c.out, stderr: c.err, makeService: m.factory });
+    expect(code).toBe(0);
+    expect(m.preview).toHaveBeenCalledWith({ direction: 'push', scope: 'memory' });
+    expect(m.preview).toHaveBeenCalledWith({ direction: 'pull', scope: 'memory' });
+    expect(m.apply).not.toHaveBeenCalled();
+    const json = JSON.parse(c.stdout().trim().split('\n').pop()!);
+    expect(json.ok).toBe(true);
+    expect(json.push).toBeTruthy();
+    expect(json.pullProjected).toBeTruthy();
+  });
+
+  it('--include-sessions widens the bidirectional scope to all', async () => {
+    const c = capture();
+    const m = makeService();
+    const code = await runCli(['--bidirectional', '--dry-run', '--include-sessions'], { stdout: c.out, stderr: c.err, makeService: m.factory });
+    expect(code).toBe(0);
+    expect(m.preview).toHaveBeenCalledWith({ direction: 'push', scope: 'all' });
+  });
+
+  it('--bidirectional --apply runs push then pull and prints the verification', async () => {
+    const c = capture();
+    const m = makeService();
+    const code = await runCli(['--bidirectional', '--apply', '--preview-id', 'p'.repeat(32), '--confirm'], { stdout: c.out, stderr: c.err, makeService: m.factory });
+    expect(code).toBe(0);
+    expect(m.apply).toHaveBeenCalledWith({ previewId: 'p'.repeat(32), direction: 'push', confirm: true, scope: 'memory' });
+    const json = JSON.parse(c.stdout().trim().split('\n').pop()!);
+    expect(json.ok).toBe(true);
+    expect(json.verification).toBeTruthy();
+  });
+
+  it('--bidirectional rejects the destructive override strategy', async () => {
+    const c = capture();
+    const m = makeService();
+    const code = await runCli(['--bidirectional', '--strategy', 'override', '--ack-override'], { stdout: c.out, stderr: c.err, makeService: m.factory });
+    expect(code).toBe(1);
+    expect(c.stderr()).toMatch(/merge/i);
+    expect(m.preview).not.toHaveBeenCalled();
+    expect(m.apply).not.toHaveBeenCalled();
+  });
 });
