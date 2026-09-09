@@ -30,6 +30,29 @@ describe('transport', () => {
     expect(runner.run).toHaveBeenCalledWith('ssh', expect.arrayContaining(['sync-host']), expect.anything());
   });
 
+  it('remoteHome retries once after a transient ssh timeout', async () => {
+    let calls = 0;
+    const runner: ProcessRunner = {
+      run: vi.fn(async () => {
+        calls++;
+        if (calls === 1) throw new Error('process "ssh sync-host printf %s $HOME" timed out after 8000ms');
+        return { stdout: Buffer.from('/home/kai'), stderr: Buffer.alloc(0), exitCode: 0 };
+      }),
+    } as unknown as ProcessRunner;
+    const transport = new SshRsyncTransport(runner);
+    await expect(transport.remoteHome({ host: 'sync-host' })).resolves.toBe('/home/kai');
+    expect(calls).toBe(2);
+  });
+
+  it('remoteHome still fails closed after the retry is exhausted', async () => {
+    const runner: ProcessRunner = {
+      run: vi.fn(async () => { throw new Error('timed out'); }),
+    } as unknown as ProcessRunner;
+    const transport = new SshRsyncTransport(runner);
+    await expect(transport.remoteHome({ host: 'sync-host' })).rejects.toThrow();
+    expect((runner.run as any).mock.calls.length).toBe(2);
+  });
+
   it('propagates non-zero rsync failure with stderr', async () => {
     const runner: ProcessRunner = {
       run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('no such file'), exitCode: 23 })),

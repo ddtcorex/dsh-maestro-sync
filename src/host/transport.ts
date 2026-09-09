@@ -74,15 +74,28 @@ export class SshRsyncTransport implements SyncTransport {
       throw Object.assign(new Error('remoteHome requires a non-empty host'), failure('validate', 'INVALID_HOST', 'remoteHome requires a non-empty host'));
     }
     // Preflight: `printf %s '$HOME'` over ssh returns the remote home as bytes.
-    const result = await this.runner.run('ssh', [...this.sshArgs(target.host), 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
-    if (result.exitCode !== 0) {
-      throw Object.assign(new Error(`remoteHome failed: ${result.stderr.toString()}`), failure('validate', 'REMOTE_HOME_FAILED', result.stderr.toString()));
+    // SSH-over-Cloudflare handshakes flake transiently (bad-handshake races),
+    // so one retry on spawn/timeout throw; exit-code and content failures are
+    // deterministic and fail fast. Still throws after the retry is exhausted.
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let result;
+      try {
+        result = await this.runner.run('ssh', [...this.sshArgs(target.host), 'printf', '%s', '$HOME'], { timeoutMs: 8000 });
+      } catch (e) {
+        lastErr = e;
+        continue;
+      }
+      if (result.exitCode !== 0) {
+        throw Object.assign(new Error(`remoteHome failed: ${result.stderr.toString()}`), failure('validate', 'REMOTE_HOME_FAILED', result.stderr.toString()));
+      }
+      const home = result.stdout.toString('utf-8').trim();
+      if (!home || !home.startsWith('/')) {
+        throw Object.assign(new Error(`invalid remote home: ${JSON.stringify(home)}`), failure('validate', 'INVALID_REMOTE_HOME', String(home)));
+      }
+      return home;
     }
-    const home = result.stdout.toString('utf-8').trim();
-    if (!home || !home.startsWith('/')) {
-      throw Object.assign(new Error(`invalid remote home: ${JSON.stringify(home)}`), failure('validate', 'INVALID_REMOTE_HOME', String(home)));
-    }
-    return home;
+    throw lastErr instanceof Error ? lastErr : new Error(`remoteHome failed after retry: ${String(lastErr)}`);
   }
 
   async stage(target: RemoteTarget, paths: readonly string[], destination: string): Promise<void> {
