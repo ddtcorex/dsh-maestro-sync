@@ -18,20 +18,34 @@ import { validateHost } from './validation.js';
 import { SyncService } from './sync-service.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
 import type { SyncDirection, SyncScope } from './sync-types.js';
+import { checkMachines, readLocalMachineId, type MachineMode } from './machine-id.js';
+import { restoreLocalTunnel, restoreRemoteTunnel } from './tunnel-restore.js';
+import { NodeProcessRunner } from './process-runner.js';
+import { SshRsyncTransport } from './transport.js';
 
 interface CliDeps {
   stdout?: (s: string) => void;
   stderr?: (s: string) => void;
   makeService?: (cfg: SyncConfig) => Promise<SyncService>;
+  /** Hermetic seam for the machine-identity reads (defaults hit real fs/ssh). */
+  identity?: {
+    readLocal?: (dshHome: string) => Promise<string | null>;
+    readRemote?: (host: string, remoteDsh: string) => Promise<string | null>;
+  };
 }
 
 interface CliOpts {
   mode: 'pull' | 'push' | 'bidirectional' | null;
+  subcommand: 'check-machines' | 'tunnel-restore' | null;
   dryRun: boolean;
   hasApplyFlag: boolean;
   applyPreviewId?: string;
   confirm: boolean;
   includeSessions: boolean;
+  from?: string;
+  to?: string;
+  side?: string;
+  profile?: string;
   localDsh?: string;
   remote?: string;
   remoteDsh?: string;
@@ -50,12 +64,17 @@ USAGE
   node ${prog} --pull|--push --apply --preview-id ID --confirm   apply a preview
   node ${prog} --bidirectional [--dry-run] [--include-sessions]  push-then-pull in one operation
   node ${prog} --bidirectional --apply --preview-id ID --confirm apply it
+  node ${prog} check-machines [--pull|--push|--bidirectional] [--from X --to Y]
+  node ${prog} tunnel-restore --side local|remote [--profile NAME] --confirm
 
 OPTIONS
   --pull                    pull merge: remote -> local
   --push                    push merge: local -> remote
   --bidirectional           push then pull, one operation (merge strategy only)
   --include-sessions        with --bidirectional: also sync sessions/ (default: memories only)
+  --from/--to <id>          absolute machines (dsh-home|dsh-company); identity is
+                            enforced before any preview/apply (from defaults to
+                            the local machine-id, to defaults to its peer)
   --dry-run, -n             preview only (default); never writes
   --apply                   apply a previous preview — REQUIRES --preview-id and --confirm
   --preview-id <id>         preview id returned by --dry-run
@@ -69,6 +88,8 @@ OPTIONS
                             override: destructive rsync --delete mirror — REQUIRES --ack-override
   --ack-override            acknowledge that --strategy=override is destructive
   --backup-root <path>      accepted for compatibility; DSH publishes .bak.<ts> beside each file
+  --side <local|remote>     with tunnel-restore: which side to restore (default local)
+  --profile <name>          with tunnel-restore: profile name (required for remote)
   --help, -h                this help
 
 EXIT CODES
@@ -79,6 +100,7 @@ EXIT CODES
 export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | null {
   const opts: CliOpts = {
     mode: null,
+    subcommand: null,
     dryRun: true,
     hasApplyFlag: false,
     confirm: false,
@@ -93,8 +115,23 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
     return null;
   };
 
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i]!;
+  // Subcommands come first (check-machines, tunnel-restore); the rest are flags.
+  const rest = [...argv];
+  if (rest.length > 0 && (rest[0] === 'check-machines' || rest[0] === 'tunnel-restore')) {
+    opts.subcommand = rest.shift() as 'check-machines' | 'tunnel-restore';
+  }
+
+  const takeValue = (a: string, i: number, flag: string): string | null => {
+    const v = rest[i];
+    if (!v || v.startsWith('-')) {
+      fail(`${flag} requires a value`);
+      return null;
+    }
+    return v;
+  };
+
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
     if (a === '--pull' || a === '--push' || a === '--bidirectional') {
       if (opts.mode) return fail('Specify only one of --pull, --push or --bidirectional');
       opts.mode = a === '--pull' ? 'pull' : a === '--push' ? 'push' : 'bidirectional';
@@ -108,7 +145,7 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
     } else if (a === '--confirm') {
       opts.confirm = true;
     } else if (a === '--preview-id') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--preview-id requires a value');
       opts.applyPreviewId = v;
     } else if (a.startsWith('--preview-id=')) {
@@ -116,27 +153,27 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
     } else if (a === '--help' || a === '-h') {
       opts.help = true;
     } else if (a === '--local-dsh' || a === '--localDsh') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--local-dsh requires a path value');
       opts.localDsh = v;
     } else if (a === '--remote') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--remote requires a host value');
       opts.remote = v;
     } else if (a.startsWith('--remote=')) {
       opts.remote = a.slice('--remote='.length);
     } else if (a === '--remote-dsh' || a === '--remoteDsh') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--remote-dsh requires a path value');
       opts.remoteDsh = v;
     } else if (a.startsWith('--remote-dsh=')) {
       opts.remoteDsh = a.slice('--remote-dsh='.length);
     } else if (a === '--backup-root' || a === '--backupRoot') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--backup-root requires a path value');
       opts.backupRoot = v;
     } else if (a === '--strategy') {
-      const v = argv[++i];
+      const v = rest[++i];
       if (!v || (v !== 'merge' && v !== 'override')) return fail('--strategy must be merge or override');
       opts.strategy = v;
     } else if (a.startsWith('--strategy=')) {
@@ -145,6 +182,30 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
       opts.strategy = v;
     } else if (a === '--ack-override') {
       opts.ackOverride = true;
+    } else if (a === '--from') {
+      const v = rest[++i];
+      if (!v || v.startsWith('-')) return fail('--from requires a value (dsh-home|dsh-company)');
+      opts.from = v;
+    } else if (a.startsWith('--from=')) {
+      opts.from = a.slice('--from='.length);
+    } else if (a === '--to') {
+      const v = rest[++i];
+      if (!v || v.startsWith('-')) return fail('--to requires a value (dsh-home|dsh-company)');
+      opts.to = v;
+    } else if (a.startsWith('--to=')) {
+      opts.to = a.slice('--to='.length);
+    } else if (a === '--side') {
+      const v = rest[++i];
+      if (!v || v.startsWith('-')) return fail('--side requires local or remote');
+      opts.side = v;
+    } else if (a.startsWith('--side=')) {
+      opts.side = a.slice('--side='.length);
+    } else if (a === '--profile') {
+      const v = rest[++i];
+      if (!v || v.startsWith('-')) return fail('--profile requires a value');
+      opts.profile = v;
+    } else if (a.startsWith('--profile=')) {
+      opts.profile = a.slice('--profile='.length);
     } else if (a === '--') {
       break;
     } else if (a.startsWith('-')) {
@@ -159,6 +220,16 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
   }
   if (opts.mode === 'bidirectional' && opts.strategy === 'override') {
     return fail('--bidirectional requires the merge strategy (override is a one-direction destructive mirror)');
+  }
+  const idRe = /^(dsh-home|dsh-company)$/;
+  if (opts.from !== undefined && !idRe.test(opts.from)) return fail('--from must be dsh-home or dsh-company');
+  if (opts.to !== undefined && !idRe.test(opts.to)) return fail('--to must be dsh-home or dsh-company');
+  if (opts.subcommand === 'tunnel-restore') {
+    if (opts.mode) return fail('tunnel-restore takes no --pull/--push/--bidirectional flag');
+    const side = opts.side ?? 'local';
+    if (side !== 'local' && side !== 'remote') return fail('--side must be local or remote');
+    if (opts.confirm !== true) return fail('tunnel-restore requires --confirm');
+    if (side === 'remote' && !opts.profile) return fail('tunnel-restore --side remote requires --profile <name>');
   }
   if (opts.hasApplyFlag) {
     if (!opts.applyPreviewId) return fail('--apply requires --preview-id <id> from a previous --dry-run preview');
@@ -218,6 +289,24 @@ async function runBidirectional(
   return 0;
 }
 
+/** Resolve a `~/.dsh`-style placeholder to an absolute remote path (read-only preflight). */
+async function resolveAbsoluteRemoteDsh(transport: SshRsyncTransport, host: string, remoteDsh: string): Promise<string> {
+  if (remoteDsh !== '~/.dsh' && !remoteDsh.startsWith('~/')) return remoteDsh;
+  const home = await transport.remoteHome({ host });
+  return home + remoteDsh.slice(1);
+}
+
+/** Default remote machine-id read: agent op over the existing ssh transport (no new binary). */
+async function defaultReadRemoteId(host: string, remoteDsh: string): Promise<string | null> {
+  try {
+    const transport = new SshRsyncTransport(new NodeProcessRunner());
+    const root = await resolveAbsoluteRemoteDsh(transport, host, remoteDsh);
+    return await transport.readMachineId({ host, dshRoot: root });
+  } catch {
+    return null;
+  }
+}
+
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const out = deps.stdout ?? ((s: string) => process.stdout.write(s));
   const err = deps.stderr ?? ((s: string) => process.stderr.write(s));
@@ -228,8 +317,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     out(printHelp(path.basename(process.argv[1] || 'cli.js')) + '\n');
     return 0;
   }
-  if (!opts.mode) {
-    err('[err] Missing required --pull, --push or --bidirectional (see --help)');
+  if (!opts.mode && !opts.subcommand) {
+    err('[err] Missing required --pull, --push, --bidirectional, check-machines or tunnel-restore (see --help)');
     return 1;
   }
 
@@ -248,6 +337,82 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   }
   const resolvedRemoteDsh = opts.remoteDsh ?? cfg.remoteDshPath;
   const resolvedLocalDsh = opts.localDsh ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh');
+
+  // Machine identity: resolved before any service/preview/apply work.
+  const readLocal = deps.identity?.readLocal ?? ((home: string) => readLocalMachineId(undefined, home));
+  const readRemote = deps.identity?.readRemote ?? defaultReadRemoteId;
+  const peer = (id: string): string => (id === 'dsh-home' ? 'dsh-company' : 'dsh-home');
+
+  if (opts.subcommand === 'check-machines') {
+    const mode: MachineMode = opts.mode ?? 'bidirectional';
+    const localId = await readLocal(resolvedLocalDsh);
+    const remoteId = await readRemote(resolvedRemote, resolvedRemoteDsh);
+    const from = opts.from ?? localId ?? 'dsh-home';
+    const to = opts.to ?? peer(from);
+    const verdict = checkMachines({ mode, from, to, localId, remoteId });
+    if (!verdict.ok) {
+      out(JSON.stringify({ ok: false, code: verdict.code, error: verdict.message, localId, remoteId, from, to }) + '\n');
+      err(`[err] ${verdict.message}`);
+      return 1;
+    }
+    out(JSON.stringify({ ok: true, mode, localId, remoteId, from, to }) + '\n');
+    err(`[sync] machines ok: local=${localId ?? 'unknown'} remote=${remoteId ?? 'unknown'} from=${from} to=${to}`);
+    return 0;
+  }
+
+  if (opts.subcommand === 'tunnel-restore') {
+    const side = opts.side ?? 'local';
+    if (side === 'local') {
+      err(`[sync] tunnel-restore local (profile ${opts.profile ?? 'auto'})`);
+      const r = await restoreLocalTunnel({ dshHome: resolvedLocalDsh, profileName: opts.profile });
+      out(JSON.stringify({ ok: r.ok, side, ...(r.ok ? { profile: r.profile } : { code: r.code }) }) + '\n');
+      if (!r.ok) {
+        err('[err] tunnel-restore local: no profile found');
+        return 1;
+      }
+      err(`[sync] tunnel restored from profile ${r.profile}`);
+      return 0;
+    }
+    // remote: explicit profile required (validated in parseArgs); caller ensures the agent.
+    err(`[sync] tunnel-restore remote (profile ${opts.profile})`);
+    try {
+      const runner = new NodeProcessRunner();
+      const transport = new SshRsyncTransport(runner);
+      await transport.ensureAgent({ host: resolvedRemote, dshRoot: await resolveAbsoluteRemoteDsh(transport, resolvedRemote, resolvedRemoteDsh) });
+      const r = await restoreRemoteTunnel(transport, { host: resolvedRemote, dshRoot: await resolveAbsoluteRemoteDsh(transport, resolvedRemote, resolvedRemoteDsh) }, opts.profile!);
+      if (!r.ok) {
+        out(JSON.stringify({ ok: false, side, code: r.code }) + '\n');
+        err(`[err] tunnel-restore remote: ${r.code}`);
+        return 1;
+      }
+      out(JSON.stringify({ ok: true, side, profile: r.profile, changed: r.changed, sha256: r.sha256 }) + '\n');
+      err(`[sync] tunnel restored on remote from profile ${r.profile} (changed=${r.changed})`);
+      return 0;
+    } catch (e: any) {
+      out(JSON.stringify({ ok: false, side, error: e?.message ?? String(e), code: e?.code }) + '\n');
+      err(`[err] tunnel-restore remote failed: ${e?.message ?? String(e)}`);
+      return 1;
+    }
+  }
+
+  // Mode flows: enforce identity before constructing the service.
+  // (Subcommands return above, so a mode is always present here.)
+  if (!opts.mode) {
+    err('[err] Missing required --pull, --push or --bidirectional (see --help)');
+    return 1;
+  }
+  {
+    const mode: MachineMode = opts.mode;
+    const localId = await readLocal(resolvedLocalDsh);
+    const remoteId = await readRemote(resolvedRemote, resolvedRemoteDsh);
+    const from = opts.from ?? localId ?? 'dsh-home';
+    const to = opts.to ?? peer(from);
+    const verdict = checkMachines({ mode, from, to, localId, remoteId });
+    if (!verdict.ok) {
+      err(`[err] ${verdict.message}`);
+      return 1;
+    }
+  }
 
   let svc: SyncService;
   if (deps.makeService) {
