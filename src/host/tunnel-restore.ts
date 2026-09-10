@@ -28,9 +28,10 @@ export function isValidTunnelDomain(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Local tunnel profile restore: re-patches maestro/settings.json
- * domains.tunnel from this machine's own profile dir. Never throws;
- * profiles may not exist on CI.
+ * Local tunnel profile restore: re-patches the moved shared store
+ * (<dsh>/dsh-maestro-config/settings.json via config-lib) domains.tunnel
+ * from this machine's own profile dir. Never throws; profiles may not
+ * exist on CI.
  */
 export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?: string }): Promise<LocalRestoreResult> {
   try {
@@ -60,9 +61,11 @@ export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?
     const tunnelSettingsPath = path.join(profileDir, 'settings-tunnel.json');
     const cloudflaredSrc = path.join(profileDir, 'cloudflared-config.yml');
     const cloudflaredDst = path.join(dshHome, 'dsh-maestro-remote', 'cloudflared-config.yml');
-    const settingsPath = path.join(dshHome, 'maestro', 'settings.json');
+    const settingsPath = path.join(dshHome, 'dsh-maestro-config', 'settings.json');
 
-    if (!fs.existsSync(tunnelSettingsPath) || !fs.existsSync(settingsPath)) return { ok: false, code: 'NO_PROFILE' };
+    // Gate only on the profile source: the store file itself may be absent
+    // (config-lib recreates it); a missing store must not skip the restore.
+    if (!fs.existsSync(tunnelSettingsPath)) return { ok: false, code: 'NO_PROFILE' };
 
     try {
       if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {

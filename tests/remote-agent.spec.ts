@@ -168,7 +168,7 @@ describe('remote-agent', () => {
       fs.mkdirSync(prof, { recursive: true });
       const profileTunnel = { mode: 'named', id: 'remote-id', hostname: 'new-company.example.com' };
       fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: profileTunnel } }));
-      const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
+      const settingsPath = path.join(remote.root, 'dsh-maestro-config', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
       fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: { mode: 'named', hostname: 'stale' }, jobs: { x: 1 } } }));
       const res = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', 'dsh-company'], { encoding: 'utf-8' });
@@ -177,6 +177,7 @@ describe('remote-agent', () => {
       const doc = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
       expect(doc.domains.tunnel).toEqual(profileTunnel);
       expect(doc.domains.jobs).toEqual({ x: 1 });
+      expect(fs.existsSync(path.join(remote.root, 'maestro', 'settings.json'))).toBe(false);
     } finally {
       remote.cleanup();
     }
@@ -189,7 +190,7 @@ describe('remote-agent', () => {
       fs.mkdirSync(prof, { recursive: true });
       const same = { mode: 'named', hostname: 'same.example.com' };
       fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: same } }));
-      const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
+      const settingsPath = path.join(remote.root, 'dsh-maestro-config', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
       fs.writeFileSync(settingsPath, JSON.stringify({ domains: { tunnel: same } }));
       const again = spawnSync(path.join(remote.bin, 'maestro-sync-commit'), ['tunnel-patch', 'dsh-company'], { encoding: 'utf-8' });
@@ -208,7 +209,7 @@ describe('remote-agent', () => {
       const prof = path.join(remote.root, 'dsh-maestro-remote', 'tunnel-profiles', 'dsh-company');
       fs.mkdirSync(prof, { recursive: true });
       fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: 'flat.example.com' } }));
-      const settingsPath = path.join(remote.root, 'maestro', 'settings.json');
+      const settingsPath = path.join(remote.root, 'dsh-maestro-config', 'settings.json');
       fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
       const before = JSON.stringify({ domains: { tunnel: { mode: 'named', hostname: 'keep' } } });
       fs.writeFileSync(settingsPath, before);

@@ -11,7 +11,7 @@
  * - `maestro-sync-commit tunnel-patch <profile>`: reads the tunnel domain
  *   from `<dshRoot>/dsh-maestro-remote/tunnel-profiles/<profile>/`
  *   `settings-tunnel.json` on the remote itself and rewrites ONLY the
- *   `domains.tunnel` value inside `<dshRoot>/maestro/settings.json`
+ *   `domains.tunnel` value inside `<dshRoot>/dsh-maestro-config/settings.json`
  *   (JSON-aware object assignment, atomic tmp+rename, mode 0600). The
  *   tunnel domain is a named-tunnel OBJECT, never a bare string — a
  *   2026-09-09 string write clobbered the object shape and took a tunnel
@@ -46,8 +46,8 @@ export function remoteAgentSource(): string {
 # reports CONCURRENT_MODIFICATION and never overwrites. Committed targets are
 # backed up beside the file as <path>.bak.<ts>.<pid>. Any failure exits non-zero.
 # machine-id prints <dshRoot>/machine-id. tunnel-patch rewrites only
-# domains.tunnel in <dshRoot>/maestro/settings.json from the named profile
-# (see header comment); both print machine-readable lines and never touch stdin.
+# domains.tunnel in <dshRoot>/dsh-maestro-config/settings.json from the named
+# profile (see header comment); both print machine-readable lines and never touch stdin.
 set -u
 
 die() { echo "maestro-sync-commit: $*" >&2; exit 1; }
@@ -82,9 +82,9 @@ if [ "$cmd" = "tunnel-patch" ]; then
   esac
   command -v python3 >/dev/null 2>&1 || die "TUNNEL_PATCH_UNSUPPORTED: python3 not found on remote"
   profile_settings="$dsh_root/dsh-maestro-remote/tunnel-profiles/$profile/settings-tunnel.json"
-  settings="$dsh_root/maestro/settings.json"
+  settings="$dsh_root/dsh-maestro-config/settings.json"
   [ -f "$profile_settings" ] || die "no tunnel profile: $profile"
-  [ -f "$settings" ] || die "no settings.json under $dsh_root/maestro"
+  [ -f "$settings" ] || die "no settings.json under $dsh_root/dsh-maestro-config"
   # JSON-aware object assignment of domains.tunnel only; every other key is
   # preserved. The profile value MUST be a named-tunnel object (mode/hostname)
   # — a bare string fails closed instead of clobbering the object shape.
