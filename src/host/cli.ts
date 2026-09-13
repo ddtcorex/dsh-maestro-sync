@@ -13,13 +13,14 @@
  */
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { loadSyncConfig, type SyncConfig } from './config.js';
+import { DEFAULT_REMOTE_HOST, loadSyncConfig, type SyncConfig } from './config.js';
 import { validateHost } from './validation.js';
 import { SyncService } from './sync-service.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
 import type { SyncDirection, SyncScope } from './sync-types.js';
 import { checkMachines, isMachineId, peerMachineId, readLocalMachineId, type MachineMode } from './machine-id.js';
 import { restoreLocalTunnel, restoreRemoteTunnel } from './tunnel-restore.js';
+import { clearPeerHost, writePeerHost } from './peer-host.js';
 import { NodeProcessRunner } from './process-runner.js';
 import { SshRsyncTransport } from './transport.js';
 
@@ -36,7 +37,7 @@ interface CliDeps {
 
 interface CliOpts {
   mode: 'pull' | 'push' | 'bidirectional' | null;
-  subcommand: 'check-machines' | 'tunnel-restore' | null;
+  subcommand: 'check-machines' | 'tunnel-restore' | 'set-peer-host' | null;
   dryRun: boolean;
   hasApplyFlag: boolean;
   applyPreviewId?: string;
@@ -46,6 +47,8 @@ interface CliOpts {
   to?: string;
   side?: string;
   profile?: string;
+  peerHost?: string;
+  clearPeer?: boolean;
   localDsh?: string;
   remote?: string;
   remoteDsh?: string;
@@ -66,6 +69,7 @@ USAGE
   node ${prog} --bidirectional --apply --preview-id ID --confirm apply it
   node ${prog} check-machines [--pull|--push|--bidirectional] [--from X --to Y]
   node ${prog} tunnel-restore --side local|remote [--profile NAME] --confirm
+  node ${prog} set-peer-host --host HOST | --clear
 
 OPTIONS
   --pull                    pull merge: remote -> local
@@ -81,6 +85,8 @@ OPTIONS
   --preview-id <id>         preview id returned by --dry-run
   --confirm                 explicit confirmation that the preview may be applied
   --local-dsh <path>        local DSH home (default: DSH_HOME or ~/.dsh)
+  --host <host>             with set-peer-host: this machine's peer ssh target
+  --clear                   with set-peer-host: drop the machine-local peer
   --remote <host>           ssh remote host (default: from config/REMOTE_HOST)
   --remote-dsh <path>       remote DSH path; must be absolute (e.g. /home/kai/.dsh);
                             a '~/.dsh' default is resolved to an absolute remote home
@@ -118,8 +124,8 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
 
   // Subcommands come first (check-machines, tunnel-restore); the rest are flags.
   const rest = [...argv];
-  if (rest.length > 0 && (rest[0] === 'check-machines' || rest[0] === 'tunnel-restore')) {
-    opts.subcommand = rest.shift() as 'check-machines' | 'tunnel-restore';
+  if (rest.length > 0 && (rest[0] === 'check-machines' || rest[0] === 'tunnel-restore' || rest[0] === 'set-peer-host')) {
+    opts.subcommand = rest.shift() as 'check-machines' | 'tunnel-restore' | 'set-peer-host';
   }
 
   const takeValue = (a: string, i: number, flag: string): string | null => {
@@ -201,6 +207,15 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
       opts.side = v;
     } else if (a.startsWith('--side=')) {
       opts.side = a.slice('--side='.length);
+    } else if (a === '--host') {
+      const v = rest[++i];
+      // A host, never a flag: `user@host` and bare hostnames are both legal.
+      if (!v || v.startsWith('--')) return fail('--host requires a value');
+      opts.peerHost = v;
+    } else if (a.startsWith('--host=')) {
+      opts.peerHost = a.slice('--host='.length);
+    } else if (a === '--clear') {
+      opts.clearPeer = true;
     } else if (a === '--profile') {
       const v = rest[++i];
       if (!v || v.startsWith('-')) return fail('--profile requires a value');
@@ -224,6 +239,11 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
   }
   if (opts.from !== undefined && !isMachineId(opts.from)) return fail('--from must be a machine id (letters, digits, . _ -)');
   if (opts.to !== undefined && !isMachineId(opts.to)) return fail('--to must be a machine id (letters, digits, . _ -)');
+  if (opts.subcommand === 'set-peer-host') {
+    if (opts.mode) return fail('set-peer-host takes no --pull/--push/--bidirectional flag');
+    if (opts.clearPeer === true && opts.peerHost !== undefined) return fail('set-peer-host takes either --host or --clear, not both');
+    if (opts.clearPeer !== true && !opts.peerHost) return fail('set-peer-host requires --host <host> or --clear');
+  }
   if (opts.subcommand === 'tunnel-restore') {
     if (opts.mode) return fail('tunnel-restore takes no --pull/--push/--bidirectional flag');
     const side = opts.side ?? 'local';
@@ -322,11 +342,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 1;
   }
 
+  const resolvedLocalDsh = opts.localDsh ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh');
   let cfg: SyncConfig;
   try {
-    cfg = await loadSyncConfig();
+    cfg = await loadSyncConfig({ dshHome: resolvedLocalDsh });
   } catch {
-    cfg = { remoteHost: process.env.REMOTE_HOST || 'kai@ssh.ddtcorex.com', remoteDshPath: '~/.dsh', strategy: 'merge' };
+    cfg = { remoteHost: process.env.REMOTE_HOST || DEFAULT_REMOTE_HOST, remoteDshPath: '~/.dsh', strategy: 'merge' };
   }
   const resolvedRemote = opts.remote ?? cfg.remoteHost;
   try {
@@ -336,7 +357,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 1;
   }
   const resolvedRemoteDsh = opts.remoteDsh ?? cfg.remoteDshPath;
-  const resolvedLocalDsh = opts.localDsh ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh');
 
   // Machine identity: resolved before any service/preview/apply work.
   const readLocal = deps.identity?.readLocal ?? ((home: string) => readLocalMachineId(undefined, home));
@@ -409,6 +429,25 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     } catch (e: any) {
       out(JSON.stringify({ ok: false, side, error: e?.message ?? String(e), code: e?.code }) + '\n');
       err(`[err] tunnel-restore remote failed: ${e?.message ?? String(e)}`);
+      return 1;
+    }
+  }
+
+  if (opts.subcommand === 'set-peer-host') {
+    try {
+      if (opts.clearPeer === true) {
+        const removed = clearPeerHost(resolvedLocalDsh);
+        out(JSON.stringify({ ok: true, action: 'clear', removed, dshHome: resolvedLocalDsh }) + '\n');
+        err(`[sync] machine-local peer cleared (${removed ? 'removed' : 'nothing to remove'})`);
+      } else {
+        const host = writePeerHost(resolvedLocalDsh, opts.peerHost!);
+        out(JSON.stringify({ ok: true, action: 'set', remoteHost: host, dshHome: resolvedLocalDsh }) + '\n');
+        err(`[sync] this machine's peer recorded: ${host}`);
+      }
+      return 0;
+    } catch (e: any) {
+      out(JSON.stringify({ ok: false, error: e?.message ?? String(e) }) + '\n');
+      err(`[err] set-peer-host failed: ${e?.message ?? String(e)}`);
       return 1;
     }
   }
