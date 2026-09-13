@@ -4,6 +4,14 @@
   "private": false,
   "packageManager": "pnpm@11.7.0",
   "description": "Maestro harness sync — merge memories and sessions across machines (publishable)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ddtcorex/dsh-maestro-sync.git"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
