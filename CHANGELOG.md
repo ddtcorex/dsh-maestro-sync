@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.1] - 2026-09-13
+
+### Fixed
+
+- **Machine ids are data, not a fixed pair of names** — `--from/--to` were
+  validated against two hard-coded ids and the peer came from a name table, so
+  only those two worked and the public repo carried private hostnames. The
+  Release workflow's leak guard rejects those names, which killed the `v0.3.0`
+  tag before the publish step; `0.3.1` carries the same changes as `0.3.0` plus
+  this fix. Ids now come from each side's `machine-id` file: any stable
+  identifier is accepted, the peer is derived from the ids actually read, and an
+  underivable side fails closed instead of defaulting to a name.
+
 ## [0.3.0] - 2026-09-13
 
 ### Added
