@@ -207,16 +207,25 @@ export class SshRsyncTransport implements SyncTransport {
     }
   }
 
+  /**
+   * Read-only identity probe. The deployed helper answers `machine-id` too,
+   * but only a MUTATING sync installs it (`ensureAgent`), and this probe runs
+   * before any mutation — so depending on it made the id unreadable (null) on
+   * a machine that had never synced, which is exactly when the direction has
+   * to be resolved. Read `<dshRoot>/machine-id` directly first (validated
+   * absolute path, argv-only ssh), then fall back to the helper, whose
+   * self-resolved root is authoritative when the deployed copy disagrees.
+   */
   async readMachineId(target: RemoteTarget): Promise<string | null> {
     const validated = validateRemoteTarget(target);
-    // Read-only preflight: no ensureAgent here (that mutates the remote);
-    // a missing helper fails the run and resolves to lenient unknown.
+    const direct = await this.readIdOverSsh(validated.host, ['cat', `${validated.dshRoot}/machine-id`]);
+    if (direct !== null) return direct;
+    return await this.readIdOverSsh(validated.host, [`${validated.dshRoot}/${REMOTE_AGENT_REL}`, 'machine-id']);
+  }
+
+  private async readIdOverSsh(host: string, argv: string[]): Promise<string | null> {
     try {
-      const result = await this.runner.run(
-        'ssh',
-        [validated.host, `${validated.dshRoot}/${REMOTE_AGENT_REL}`, 'machine-id'],
-        { timeoutMs: 8000 },
-      );
+      const result = await this.runner.run('ssh', [host, ...argv], { timeoutMs: 8000 });
       if (result.exitCode !== 0) return null;
       const id = result.stdout.toString('utf-8').trim();
       return id.length > 0 ? id : null;

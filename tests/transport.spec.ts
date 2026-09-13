@@ -102,11 +102,32 @@ describe('transport', () => {
     expect((runner.run as any).mock.calls[0][0]).toBe('ssh');
   });
 
-  it('readMachineId trims agent output and returns null on failure', async () => {
+  it('readMachineId reads the file directly, without the deployed agent', async () => {
     const run = vi.fn(async () => ({ stdout: Buffer.from('machine-b\n'), stderr: Buffer.alloc(0), exitCode: 0 }));
     const transport = new SshRsyncTransport({ run } as any);
     expect(await transport.readMachineId({ host: 'sync-host', dshRoot: '/home/kai/.dsh' })).toBe('machine-b');
-    expect(run).toHaveBeenCalledWith('ssh', expect.arrayContaining(['sync-host', '/home/kai/.dsh/.maestro-sync/bin/maestro-sync-commit', 'machine-id']), expect.anything());
+    // The agent is installed only by a mutating sync (`ensureAgent`), so a
+    // read-only identity probe must not depend on it.
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledWith('ssh', ['sync-host', 'cat', '/home/kai/.dsh/machine-id'], expect.anything());
+  });
+
+  it('readMachineId falls back to the deployed agent when the direct read yields nothing', async () => {
+    const run = vi.fn(async (_file: string, args: readonly string[]) =>
+      args.includes('machine-id') && String(args[1]).includes('.maestro-sync')
+        ? { stdout: Buffer.from('machine-b\n'), stderr: Buffer.alloc(0), exitCode: 0 }
+        : { stdout: Buffer.alloc(0), stderr: Buffer.from('missing'), exitCode: 1 },
+    );
+    const transport = new SshRsyncTransport({ run } as any);
+    expect(await transport.readMachineId({ host: 'sync-host', dshRoot: '/home/kai/.dsh' })).toBe('machine-b');
+    expect(run).toHaveBeenCalledWith(
+      'ssh',
+      expect.arrayContaining(['sync-host', '/home/kai/.dsh/.maestro-sync/bin/maestro-sync-commit', 'machine-id']),
+      expect.anything(),
+    );
+  });
+
+  it('readMachineId returns null when neither read yields an id', async () => {
     const failing = new SshRsyncTransport({ run: vi.fn(async () => ({ stdout: Buffer.alloc(0), stderr: Buffer.from('x'), exitCode: 1 })) } as any);
     expect(await failing.readMachineId({ host: 'sync-host', dshRoot: '/home/kai/.dsh' })).toBeNull();
   });
