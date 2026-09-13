@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0] - 2026-09-13
+
+### Added
+
+- Self-contained sync lifecycle, no external scripts (#16).
+- One-shot bidirectional push-then-pull (#15).
+- Mobile-first settings redesign (#13).
+
+### Fixed
+
+- Declare row `inject` for DSH 0.1.5 (#19).
+- Restore the tunnel identity into the moved shared store (#18).
+- Surface machines-check failures inline instead of hiding the line (#17).
+- Point the eligible memory root at `dsh-maestro-memory` (#14).
+
 All notable changes to this project are documented in this file. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
