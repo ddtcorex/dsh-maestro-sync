@@ -16,6 +16,30 @@ export type MachineVerdict =
   | { ok: true; localId: string | null; remoteId: string | null }
   | { ok: false; code: 'WRONG_MACHINE'; message: string };
 
+/**
+ * A machine id is whatever that machine wrote to `$DSH_HOME/machine-id` — it
+ * is data, never a fixed name. The shape stays narrow so an id can be echoed in
+ * logs and reused as a profile name without quoting surprises.
+ */
+const MACHINE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export function isMachineId(id: string): boolean {
+  return MACHINE_ID_RE.test(id);
+}
+
+/**
+ * The other side's id, derived from the ids actually read from the two
+ * machines (`readLocalMachineId`/`readRemoteMachineId`). Returns null when the
+ * caller's id matches neither side: an underivable peer must be asked for with
+ * `--to`, never guessed from a name table.
+ */
+export function peerMachineId(from: string, localId: string | null, remoteId: string | null): string | null {
+  const known = (v: string | null): v is string => typeof v === 'string' && v.length > 0;
+  if (known(localId) && from === localId) return known(remoteId) ? remoteId : null;
+  if (known(remoteId) && from === remoteId) return known(localId) ? localId : null;
+  return null;
+}
+
 export async function readLocalMachineId(fsMod: any = nodeFs, dshHome?: string): Promise<string | null> {
   try {
     const home = dshHome ?? process.env.DSH_HOME ?? '';

@@ -40,7 +40,7 @@ function makeService(applyResult?: any) {
 }
 
 /** Hermetic machine ids for the CLI identity gate (never touches real HOME/ssh). */
-function makeIdentity(localId: string | null = 'dsh-home', remoteId: string | null = 'dsh-company') {
+function makeIdentity(localId: string | null = 'machine-a', remoteId: string | null = 'machine-b') {
   return {
     readLocal: vi.fn(async (_dshHome: string) => localId),
     readRemote: vi.fn(async (_host: string, _remoteDsh: string) => remoteId),
@@ -51,7 +51,7 @@ describe('cli', () => {
   it('--pull with no apply flags is a preview: final JSON on stdout with previewId', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['--pull', '--dry-run', '--from', 'dsh-company', '--to', 'dsh-home'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['--pull', '--dry-run', '--from', 'machine-b', '--to', 'machine-a'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(0);
     expect(m.preview).toHaveBeenCalledWith({ direction: 'pull' });
     expect(m.apply).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe('cli', () => {
   it('--apply --preview-id ID --confirm applies and prints the structured result', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['--pull', '--apply', '--preview-id', 'p'.repeat(32), '--confirm', '--from', 'dsh-company', '--to', 'dsh-home'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['--pull', '--apply', '--preview-id', 'p'.repeat(32), '--confirm', '--from', 'machine-b', '--to', 'machine-a'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(0);
     expect(m.apply).toHaveBeenCalledWith({ previewId: 'p'.repeat(32), direction: 'pull', confirm: true });
     const json = JSON.parse(c.stdout().trim().split('\n').pop()!);
@@ -104,14 +104,14 @@ describe('cli', () => {
   it('--strategy=override requires a separate --ack-override acknowledgement', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['--pull', '--dry-run', '--strategy', 'override', '--from', 'dsh-company', '--to', 'dsh-home'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['--pull', '--dry-run', '--strategy', 'override', '--from', 'machine-b', '--to', 'machine-a'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(1);
     expect(c.stderr()).toMatch(/ack-override/i);
     expect(m.preview).not.toHaveBeenCalled();
     // with the ack flag it proceeds
     const c2 = capture();
     const m2 = makeService();
-    const code2 = await runCli(['--pull', '--dry-run', '--strategy', 'override', '--ack-override', '--from', 'dsh-company', '--to', 'dsh-home'], { stdout: c2.out, stderr: c2.err, makeService: m2.factory, identity: makeIdentity() });
+    const code2 = await runCli(['--pull', '--dry-run', '--strategy', 'override', '--ack-override', '--from', 'machine-b', '--to', 'machine-a'], { stdout: c2.out, stderr: c2.err, makeService: m2.factory, identity: makeIdentity() });
     expect(code2).toBe(0);
   });
 
@@ -171,16 +171,16 @@ describe('cli', () => {
   it('check-machines reports ids and fails closed on mismatch', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['check-machines', '--from', 'dsh-home', '--to', 'dsh-company'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['check-machines', '--from', 'machine-a', '--to', 'machine-b'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(0);
     const json = JSON.parse(c.stdout().trim().split('\n').pop()!);
-    expect(json).toMatchObject({ ok: true, localId: 'dsh-home', remoteId: 'dsh-company' });
+    expect(json).toMatchObject({ ok: true, localId: 'machine-a', remoteId: 'machine-b' });
   });
 
   it('check-machines exits 1 on wrong-machine without touching the service', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['check-machines', '--pull', '--from', 'dsh-home', '--to', 'dsh-company'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['check-machines', '--pull', '--from', 'machine-a', '--to', 'machine-b'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(1);
     expect(c.stderr()).toMatch(/wrong-machine/i);
     expect(m.preview).not.toHaveBeenCalled();
@@ -190,7 +190,7 @@ describe('cli', () => {
   it('--bidirectional with --from/--to mismatch exits non-zero before any preview', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['--bidirectional', '--from', 'dsh-home', '--to', 'dsh-home', '--dry-run'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['--bidirectional', '--from', 'machine-a', '--to', 'machine-a', '--dry-run'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(1);
     expect(c.stderr()).toMatch(/wrong-machine/i);
     expect(m.preview).not.toHaveBeenCalled();
@@ -200,7 +200,7 @@ describe('cli', () => {
   it('--pull with matching --from/--to passes the identity gate', async () => {
     const c = capture();
     const m = makeService();
-    const code = await runCli(['--pull', '--dry-run', '--from', 'dsh-company', '--to', 'dsh-home'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
+    const code = await runCli(['--pull', '--dry-run', '--from', 'machine-b', '--to', 'machine-a'], { stdout: c.out, stderr: c.err, makeService: m.factory, identity: makeIdentity() });
     expect(code).toBe(0);
     expect(m.preview).toHaveBeenCalled();
   });

@@ -18,7 +18,7 @@ export function isSafeProfileName(name: string): boolean {
 /**
  * The tunnel domain is a named-tunnel OBJECT (mode/hostname/...), never a
  * bare string. A string write clobbered the object shape on 2026-09-09 and
- * took the dsh-home tunnel down (HTTP 530) — so a non-object profile value
+ * took a machine's tunnel down (HTTP 530) — so a non-object profile value
  * fails closed here before anything is written.
  */
 export function isValidTunnelDomain(v: unknown): v is Record<string, unknown> {
