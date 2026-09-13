@@ -283,6 +283,21 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
 @media (max-width: 640px) {
   [data-sync-ssh-row] > [data-sync-btn] { min-height: 48px !important; }
 }
+
+/* iOS field floor opt-out (dsh-maestro-mobile zoom guard).
+   Every text field on the page is held at 16px under html[data-mobile-nav-ios]
+   inside this same predicate, because iOS WebKit magnifies the visual viewport
+   for a focused field below 16px. That floor picks fields this panel never
+   declared, so on a phone they render 2-3px larger than the labels beside them.
+   Restore plain inheritance for our own fields only. The :not(#...) clause
+   matches every element (no node carries that id) and exists purely for
+   id-level specificity: the floor carries ten :not([type=...]) clauses, so an
+   equal-specificity !important rule loses and the fields grow back. */
+@media (max-width: 1023px) and (pointer: coarse) {
+  html[data-mobile-nav-ios] [data-sync-root] input:not(#dsh-field-floor-opt-out),
+  html[data-mobile-nav-ios] [data-sync-root] textarea:not(#dsh-field-floor-opt-out),
+  html[data-mobile-nav-ios] [data-sync-root] select:not(#dsh-field-floor-opt-out) { font-size:inherit !important; }
+}
 `
 
 function apply(ctx: any): void {
