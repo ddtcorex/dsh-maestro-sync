@@ -17,7 +17,7 @@ Thank you for contributing to **dsh-maestro-sync** (`@ddtcorex/dsh-maestro-sync`
    pnpm build        # tsc host + tsc client + node scripts/build-client.mjs -> lib/
    ```
 
-4. Open the project in your editor. Host logic lives in `src/host/`, client UI in `src/client/`, tests in `tests/`. `lib/` is committed build output — do not hand-edit.
+4. Open the project in your editor. Host logic lives in `src/host/`, client UI in `src/client/`, tests in `tests/`. `lib/` is build output (gitignored) — never hand-edit it; run `pnpm build` after a source change.
 
 ## Superpowers 3-Phase Workflow (AGENTS.md)
 
