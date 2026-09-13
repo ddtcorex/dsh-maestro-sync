@@ -271,15 +271,15 @@ describe('host', () => {
     const { join } = await import('node:path');
     const prevHome = process.env.DSH_HOME;
     const home = mkdtempSync(join(tmpdir(), 'sync-machines-'));
-    writeFileSync(join(home, 'machine-id'), 'dsh-home\n');
+    writeFileSync(join(home, 'machine-id'), 'machine-a\n');
     process.env.DSH_HOME = home;
     const targetSpy = vi.spyOn(SyncService.prototype, 'resolveTarget').mockResolvedValue({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
-    const idSpy = vi.spyOn(SshRsyncTransport.prototype, 'readMachineId').mockResolvedValue('dsh-company');
+    const idSpy = vi.spyOn(SshRsyncTransport.prototype, 'readMachineId').mockResolvedValue('machine-b');
     try {
       const { rpcHandler } = await bootPlugin();
-      const res = await rpcHandler('checkMachines', { from: 'dsh-home', to: 'dsh-company' });
+      const res = await rpcHandler('checkMachines', { from: 'machine-a', to: 'machine-b' });
       expect(res.ok).toBe(true);
-      expect(res.value).toMatchObject({ ok: true, localId: 'dsh-home', remoteId: 'dsh-company' });
+      expect(res.value).toMatchObject({ ok: true, localId: 'machine-a', remoteId: 'machine-b' });
     } finally {
       targetSpy.mockRestore();
       idSpy.mockRestore();

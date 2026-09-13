@@ -16,7 +16,7 @@ import { validateHost } from './validation.js';
 import type { PreviewJobState, RemoteTarget } from './sync-types.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
 import { restoreLocalTunnel } from './tunnel-restore.js';
-import { checkMachines, readLocalMachineId } from './machine-id.js';
+import { checkMachines, peerMachineId, readLocalMachineId } from './machine-id.js';
 import { restoreRemoteTunnel } from './tunnel-restore.js';
 
 export const RPC_CHANNEL = '/dsh-maestro-sync';
@@ -97,7 +97,6 @@ export default {
     // Shared lifecycle reads: local machine-id via the service fs, remote via
     // the service transport (fixed agent op). No new seams — tests stub the
     // service/transport methods.
-    const peerMachine = (id: string): string => (id === 'dsh-home' ? 'dsh-company' : 'dsh-home');
     const lifecycleIds = async (svc: SyncService): Promise<{ localId: string | null; remoteId: string | null; target: RemoteTarget }> => {
       const localId = await readLocalMachineId(svc.fs, svc.localDsh);
       const target = await svc.resolveTarget();
@@ -223,8 +222,11 @@ export default {
             const mode = a?.mode === 'pull' || a?.mode === 'push' ? a.mode : 'bidirectional';
             try {
               const { localId, remoteId } = await lifecycleIds(svc);
-              const from = typeof a?.from === 'string' ? a.from : (localId ?? 'dsh-home');
-              const to = typeof a?.to === 'string' ? a.to : peerMachine(from);
+              const from = typeof a?.from === 'string' ? a.from : (localId ?? undefined);
+              const to = typeof a?.to === 'string' ? a.to : (from === undefined ? undefined : peerMachineId(from, localId, remoteId) ?? undefined);
+              if (from === undefined || to === undefined) {
+                return JSON.stringify({ ok: false, code: 'MACHINE_ID_UNRESOLVED', error: 'cannot resolve --from/--to from the machine ids; pass them explicitly', localId, remoteId });
+              }
               const verdict = checkMachines({ mode, from, to, localId, remoteId });
               return verdict.ok
                 ? JSON.stringify({ ok: true, mode, localId, remoteId, from, to })
@@ -567,8 +569,11 @@ export default {
                 const mode = a.mode === 'pull' || a.mode === 'push' ? a.mode : 'bidirectional';
                 try {
                   const { localId, remoteId } = await lifecycleIds(svc);
-                  const from = typeof a.from === 'string' ? a.from : (localId ?? 'dsh-home');
-                  const to = typeof a.to === 'string' ? a.to : peerMachine(from);
+                  const from = typeof a.from === 'string' ? a.from : (localId ?? undefined);
+                  const to = typeof a.to === 'string' ? a.to : (from === undefined ? undefined : peerMachineId(from, localId, remoteId) ?? undefined);
+                  if (from === undefined || to === undefined) {
+                    return okCarrier({ ok: false, reason: 'cannot resolve --from/--to from the machine ids; pass them explicitly', mode, localId, remoteId });
+                  }
                   const verdict = checkMachines({ mode, from, to, localId, remoteId });
                   return verdict.ok
                     ? okCarrier({ ok: true, mode, localId, remoteId, from, to })

@@ -414,16 +414,16 @@ describe('SyncPanel', () => {
       if (method === 'status') return carrier({ ok: true, total: 0, offset: 0, limit: 10, files: [], nextCursor: null, connection: { ok: true, host: 'sync-host' }, remoteHost: 'sync-host' });
       const cf = checkFlowBranches(method);
       if (cf) return cf;
-      if (method === 'checkMachines') return carrier({ ok: true, mode: 'bidirectional', localId: 'dsh-home', remoteId: 'dsh-company', from: 'dsh-home', to: 'dsh-company' });
+      if (method === 'checkMachines') return carrier({ ok: true, mode: 'bidirectional', localId: 'machine-a', remoteId: 'machine-b', from: 'machine-a', to: 'machine-b' });
       if (method === 'tunnelRestore') {
         expect(args).toMatchObject({ side: 'local', confirm: true });
-        return carrier({ ok: true, side: 'local', profile: 'dsh-home' });
+        return carrier({ ok: true, side: 'local', profile: 'machine-a' });
       }
       return { ok: true };
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
     await driveCheck(user);
-    expect(await screen.findByTestId('sync-machines')).toHaveTextContent(/dsh-home.*dsh-company/);
+    expect(await screen.findByTestId('sync-machines')).toHaveTextContent(/machine-a.*machine-b/);
     await user.click(screen.getByTestId('sync-tunnel-restore'));
     await waitFor(() => expect(statusCalls(rpc)).toContain('tunnelRestore'));
   });

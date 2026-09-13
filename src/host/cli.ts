@@ -18,7 +18,7 @@ import { validateHost } from './validation.js';
 import { SyncService } from './sync-service.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
 import type { SyncDirection, SyncScope } from './sync-types.js';
-import { checkMachines, readLocalMachineId, type MachineMode } from './machine-id.js';
+import { checkMachines, isMachineId, peerMachineId, readLocalMachineId, type MachineMode } from './machine-id.js';
 import { restoreLocalTunnel, restoreRemoteTunnel } from './tunnel-restore.js';
 import { NodeProcessRunner } from './process-runner.js';
 import { SshRsyncTransport } from './transport.js';
@@ -72,9 +72,10 @@ OPTIONS
   --push                    push merge: local -> remote
   --bidirectional           push then pull, one operation (merge strategy only)
   --include-sessions        with --bidirectional: also sync sessions/ (default: memories only)
-  --from/--to <id>          absolute machines (dsh-home|dsh-company); identity is
-                            enforced before any preview/apply (from defaults to
-                            the local machine-id, to defaults to its peer)
+  --from/--to <id>          absolute machines, by the id each side wrote to its
+                            $DSH_HOME/machine-id; identity is enforced before
+                            any preview/apply (from defaults to the local
+                            machine-id, to defaults to its peer)
   --dry-run, -n             preview only (default); never writes
   --apply                   apply a previous preview — REQUIRES --preview-id and --confirm
   --preview-id <id>         preview id returned by --dry-run
@@ -184,13 +185,13 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
       opts.ackOverride = true;
     } else if (a === '--from') {
       const v = rest[++i];
-      if (!v || v.startsWith('-')) return fail('--from requires a value (dsh-home|dsh-company)');
+      if (!v || v.startsWith('-')) return fail('--from requires a value (a machine id)');
       opts.from = v;
     } else if (a.startsWith('--from=')) {
       opts.from = a.slice('--from='.length);
     } else if (a === '--to') {
       const v = rest[++i];
-      if (!v || v.startsWith('-')) return fail('--to requires a value (dsh-home|dsh-company)');
+      if (!v || v.startsWith('-')) return fail('--to requires a value (a machine id)');
       opts.to = v;
     } else if (a.startsWith('--to=')) {
       opts.to = a.slice('--to='.length);
@@ -221,9 +222,8 @@ export function parseArgs(argv: string[], err: (s: string) => void): CliOpts | n
   if (opts.mode === 'bidirectional' && opts.strategy === 'override') {
     return fail('--bidirectional requires the merge strategy (override is a one-direction destructive mirror)');
   }
-  const idRe = /^(dsh-home|dsh-company)$/;
-  if (opts.from !== undefined && !idRe.test(opts.from)) return fail('--from must be dsh-home or dsh-company');
-  if (opts.to !== undefined && !idRe.test(opts.to)) return fail('--to must be dsh-home or dsh-company');
+  if (opts.from !== undefined && !isMachineId(opts.from)) return fail('--from must be a machine id (letters, digits, . _ -)');
+  if (opts.to !== undefined && !isMachineId(opts.to)) return fail('--to must be a machine id (letters, digits, . _ -)');
   if (opts.subcommand === 'tunnel-restore') {
     if (opts.mode) return fail('tunnel-restore takes no --pull/--push/--bidirectional flag');
     const side = opts.side ?? 'local';
@@ -341,14 +341,32 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   // Machine identity: resolved before any service/preview/apply work.
   const readLocal = deps.identity?.readLocal ?? ((home: string) => readLocalMachineId(undefined, home));
   const readRemote = deps.identity?.readRemote ?? defaultReadRemoteId;
-  const peer = (id: string): string => (id === 'dsh-home' ? 'dsh-company' : 'dsh-home');
+  /**
+   * --from/--to, defaulted from the ids actually read off the two machines
+   * (`$DSH_HOME/machine-id`); an underivable peer is an error, never a guess.
+   */
+  const resolveMachines = (
+    localId: string | null,
+    remoteId: string | null,
+    o: { from?: string; to?: string },
+  ): { from: string; to: string } | { error: string } => {
+    const from = o.from ?? localId ?? undefined;
+    if (from === undefined) return { error: 'cannot read the local machine-id — pass --from <id>' };
+    const to = o.to ?? peerMachineId(from, localId, remoteId) ?? undefined;
+    if (to === undefined) return { error: 'cannot derive --to from the machine ids — pass --to <id>' };
+    return { from, to };
+  };
 
   if (opts.subcommand === 'check-machines') {
     const mode: MachineMode = opts.mode ?? 'bidirectional';
     const localId = await readLocal(resolvedLocalDsh);
     const remoteId = await readRemote(resolvedRemote, resolvedRemoteDsh);
-    const from = opts.from ?? localId ?? 'dsh-home';
-    const to = opts.to ?? peer(from);
+    const machines = resolveMachines(localId, remoteId, opts);
+    if ('error' in machines) {
+      err(`[err] ${machines.error}\n`);
+      return 1;
+    }
+    const { from, to } = machines;
     const verdict = checkMachines({ mode, from, to, localId, remoteId });
     if (!verdict.ok) {
       out(JSON.stringify({ ok: false, code: verdict.code, error: verdict.message, localId, remoteId, from, to }) + '\n');
@@ -405,8 +423,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     const mode: MachineMode = opts.mode;
     const localId = await readLocal(resolvedLocalDsh);
     const remoteId = await readRemote(resolvedRemote, resolvedRemoteDsh);
-    const from = opts.from ?? localId ?? 'dsh-home';
-    const to = opts.to ?? peer(from);
+    const machines = resolveMachines(localId, remoteId, opts);
+    if ('error' in machines) {
+      err(`[err] ${machines.error}\n`);
+      return 1;
+    }
+    const { from, to } = machines;
     const verdict = checkMachines({ mode, from, to, localId, remoteId });
     if (!verdict.ok) {
       err(`[err] ${verdict.message}`);
