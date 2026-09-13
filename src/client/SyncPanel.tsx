@@ -38,7 +38,9 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
     if (!saved.ok) return
     await s.checkConnection()
   }, [hostInput, s])
-  const sourceLabel = remoteSource === 'settings' ? 'Saved in settings' : remoteSource === 'env' ? 'From REMOTE_HOST env' : 'Built-in default'
+  // `machine` is the machine-local peer file, which outranks the shared store
+  // because the store travels between the two machines.
+  const sourceLabel = remoteSource === 'machine' ? 'Saved for this machine' : remoteSource === 'settings' ? 'Saved in settings' : remoteSource === 'env' ? 'From REMOTE_HOST env' : 'Built-in default'
 
   // Mobile-first progressive disclosure: buckets start collapsed on narrow
   // screens (<640px) so the summary + actions fit one viewport; desktop and

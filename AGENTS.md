@@ -58,6 +58,11 @@ profile) when you want it.
 
 - `src/host/index.ts` — host `apply()`: registers the preview/apply/status tools
   and the `/dsh-maestro-sync` RPC channel (loopback authority).
+- `src/host/peer-host.ts` — this machine's own peer target
+  (`<dsh>/dsh-maestro-sync/peer.json`, mode 0600). Machine-local by design, and
+  it outranks the shared store's `domains.sync.remoteHost`, which travels
+  between the machines and can therefore name the wrong one. Set it through the
+  Settings save or `node lib/cli.js set-peer-host --host <host> | --clear`.
 - `src/host/cli.ts` — `node lib/cli.js --pull [--dry-run] | --apply --preview-id ID --confirm`.
 - `src/host/sync-service.ts` — the service: snapshot, plan, apply, status pages.
 - `src/host/transport.ts` — argv-only ssh/rsync transport; `compare`/`stage`/`upload`/`ensureAgent`/`commit`.

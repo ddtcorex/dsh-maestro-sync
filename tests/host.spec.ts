@@ -222,9 +222,15 @@ describe('host', () => {
     process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'sync-save-host-'));
     try {
       const good = await rpcHandler('saveRemoteHost', { host: 'kai@ssh.example.com' });
-      expect(good).toEqual({ ok: true, value: { remoteHost: 'kai@ssh.example.com' } });
+      expect(good).toEqual({ ok: true, value: { remoteHost: 'kai@ssh.example.com', scope: 'machine' } });
       const cfg = await rpcHandler('getRemoteConfig', {});
-      expect(cfg.value).toMatchObject({ remoteHost: 'kai@ssh.example.com', source: 'settings' });
+      // Saving also records this machine's own peer file, which outranks the
+      // shared store the same save wrote: that store travels between machines,
+      // so on the mirrored machine it can name that machine instead of its peer.
+      expect(cfg.value).toMatchObject({ remoteHost: 'kai@ssh.example.com', source: 'machine' });
+      const { readFileSync } = await import('node:fs');
+      const peer = JSON.parse(readFileSync(join(process.env.DSH_HOME!, 'dsh-maestro-sync', 'peer.json'), 'utf-8'));
+      expect(peer.remoteHost).toBe('kai@ssh.example.com');
     } finally {
       if (prevHome === undefined) delete process.env.DSH_HOME;
       else process.env.DSH_HOME = prevHome;

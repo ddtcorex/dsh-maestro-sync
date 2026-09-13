@@ -8,6 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { SyncService } from './sync-service.js';
 import { loadSyncConfig } from './config.js';
+import { defaultDshHome, readPeerHost, writePeerHost } from './peer-host.js';
 import { BackupService } from './backup-service.js';
 import { S3ObjectStore } from './s3-object-store.js';
 import { resolveBackupTarget, validateR2ConfigInput, type NormalizedR2Config } from './backup-config.js';
@@ -90,7 +91,7 @@ export default {
     };
 
     const makeService = async () => {
-      const cfg = await loadSyncConfig();
+      const cfg = await loadSyncConfig({ dshHome: defaultDshHome() });
       return new SyncService({ remote: cfg.remoteHost, remoteDsh: cfg.remoteDshPath });
     };
 
@@ -408,9 +409,11 @@ export default {
                 // the UI checks explicitly via 'check').
                 const doc = await load();
                 const stored = (doc.domains?.sync as Record<string, unknown> | undefined)?.remoteHost;
-                const cfg = await loadSyncConfig();
-                const source =
-                  typeof stored === 'string' && stored.length > 0
+                const machineHost = readPeerHost(svc.localDsh);
+                const cfg = await loadSyncConfig({ dshHome: svc.localDsh });
+                const source = machineHost
+                  ? 'machine'
+                  : typeof stored === 'string' && stored.length > 0
                     ? 'settings'
                     : process.env.REMOTE_HOST || process.env.REMOTE
                       ? 'env'
@@ -426,7 +429,15 @@ export default {
                   return failCarrier(e?.message ?? 'invalid host', 'INVALID_HOST');
                 }
                 await saveDomain('sync', { remoteHost: host });
-                return okCarrier({ remoteHost: host });
+                // Also record it for THIS machine: the shared value above
+                // travels, so a peer that belongs to the other machine (or to
+                // this one) must not win here. See peer-host.ts.
+                try {
+                  writePeerHost(svc.localDsh ?? defaultDshHome(), host);
+                } catch (e: any) {
+                  return failCarrier(e?.message ?? 'could not record the machine-local peer', 'PEER_WRITE_FAILED');
+                }
+                return okCarrier({ remoteHost: host, scope: 'machine' });
               }
               case 'saveR2Config': {
                 // Non-secret backup target only — secret material is never
