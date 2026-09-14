@@ -11,7 +11,7 @@ const sourceLabel = (s: string | undefined) => (s === 'env' ? 'Env' : s === 'fil
 
 type BackupApi = ReturnType<typeof useBackupTarget>
 
-function field(input: { id: string; label: string; value: string; placeholder: string; onChange: (v: string) => void; disabled: boolean; hint?: string }) {
+function field(input: { id: string; label: string; value: string; placeholder: string; onChange: (v: string) => void; disabled: boolean; hint?: string; error?: string | undefined }) {
   return (
     <div data-r2-field="">
       <label data-r2-field-label="" htmlFor={input.id}>{input.label}</label>
@@ -26,10 +26,31 @@ function field(input: { id: string; label: string; value: string; placeholder: s
         autoCapitalize="off"
         spellCheck={false}
         disabled={input.disabled}
+        aria-invalid={input.error ? 'true' : undefined}
+        aria-describedby={input.error ? `${input.id}-error` : undefined}
       />
+      {/* Field-level error: the server validates, but the message belongs under
+          the field it names, not only in the panel banner. */}
+      {input.error ? (
+        <span id={`${input.id}-error`} data-r2-field-error="" role="alert" data-testid={`${input.id}-error`}>{input.error}</span>
+      ) : null}
       {input.hint ? <span data-r2-field-hint="">{input.hint}</span> : null}
     </div>
   )
+}
+
+/**
+ * Route a server validation message to the field it names.
+ *
+ * `validateR2ConfigInput` throws messages that lead with the offending key
+ * ("bucket is required", "invalid endpoint: …"), so the client can put the text
+ * under that input instead of only in the panel banner. Anything unrecognized
+ * stays a banner error — never silently dropped.
+ */
+function routeR2FieldError(msg: string): { field: string; message: string } | null {
+  const m = /^\s*(?:invalid\s+)?(accountId|endpoint|region|bucket|prefix|provider)\b/i.exec(msg)
+  if (!m || m[1] === undefined) return null
+  return { field: m[1], message: msg }
 }
 
 /**
@@ -45,6 +66,7 @@ function ConfigForm(props: { b: BackupApi }): React.ReactElement {
   const [region, setRegion] = React.useState('')
   const [bucket, setBucket] = React.useState('')
   const [prefix, setPrefix] = React.useState('')
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
   const [primed, setPrimed] = React.useState(false)
   React.useEffect(() => {
     if (primed || !st) return
@@ -58,6 +80,24 @@ function ConfigForm(props: { b: BackupApi }): React.ReactElement {
     setPrimed(true)
   }, [st, primed])
   const busy = b.busy || b.checking
+  /** Clear one field's error as soon as the user edits it. */
+  const bind = (key: string, set: (v: string) => void) => (v: string) => {
+    set(v)
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+  }
+  const save = async () => {
+    setFieldErrors({})
+    const res = await b.saveR2Config({ provider, accountId, endpoint, region, bucket, prefix })
+    if (!res.ok) {
+      const routed = routeR2FieldError(res.error ?? '')
+      if (routed) setFieldErrors({ [routed.field]: routed.message })
+    }
+  }
   return (
     <div data-r2-config="">
       <span data-r2-config-label="">Backup target</span>
@@ -79,13 +119,16 @@ function ConfigForm(props: { b: BackupApi }): React.ReactElement {
           ))}
         </div>
       </div>
-      {provider === 'r2' ? field({ id: 'r2-cfg-account', label: 'Account ID', value: accountId, placeholder: '32 hex chars (empty = keep default endpoint)', onChange: setAccountId, disabled: busy }) : null}
-      {field({ id: 'r2-cfg-endpoint', label: 'Endpoint', value: endpoint, placeholder: 'empty = default for provider', onChange: setEndpoint, disabled: busy })}
-      {field({ id: 'r2-cfg-region', label: 'Region', value: region, placeholder: 'auto', onChange: setRegion, disabled: busy })}
-      {field({ id: 'r2-cfg-bucket', label: 'Bucket', value: bucket, placeholder: 'maestro-backup', onChange: setBucket, disabled: busy })}
-      {field({ id: 'r2-cfg-prefix', label: 'Prefix', value: prefix, placeholder: 'v1/hosts/<id>/', onChange: setPrefix, disabled: busy })}
+      {provider === 'r2' ? field({ id: 'r2-cfg-account', label: 'Account ID', value: accountId, placeholder: '32 hex chars — leave empty to keep the default endpoint', onChange: bind('accountId', setAccountId), disabled: busy, error: fieldErrors.accountId }) : null}
+      {field({ id: 'r2-cfg-endpoint', label: 'Endpoint', value: endpoint, placeholder: 'https://<account>.r2.cloudflarestorage.com', onChange: bind('endpoint', setEndpoint), disabled: busy, error: fieldErrors.endpoint })}
+      {field({ id: 'r2-cfg-region', label: 'Region', value: region, placeholder: 'auto', onChange: bind('region', setRegion), disabled: busy, error: fieldErrors.region })}
+      {/* Placeholders must not read as working defaults: `maestro-backup` /
+          `v1/hosts/<id>/` looked pre-filled, so an untouched form failed with a
+          generic "bucket is required" that nobody could tie to the empty input. */}
+      {field({ id: 'r2-cfg-bucket', label: 'Bucket', value: bucket, placeholder: 'your-bucket-name', onChange: bind('bucket', setBucket), disabled: busy, error: fieldErrors.bucket })}
+      {field({ id: 'r2-cfg-prefix', label: 'Prefix', value: prefix, placeholder: 'your-prefix/', onChange: bind('prefix', setPrefix), disabled: busy, error: fieldErrors.prefix })}
       <div data-r2-config-row="">
-        <Button data-testid="r2-save-config" variant="primary" disabled={busy} busy={b.busy} onClick={() => void b.saveR2Config({ provider, accountId, endpoint, region, bucket, prefix })}>
+        <Button data-testid="r2-save-config" variant="primary" disabled={busy} busy={b.busy} onClick={() => void save()}>
           {b.busy ? 'Saving…' : 'Save target'}
         </Button>
       </div>

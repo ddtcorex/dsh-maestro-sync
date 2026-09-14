@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { SyncService } from '../src/host/sync-service.js';
 import { SshRsyncTransport } from '../src/host/transport.js';
 
@@ -192,6 +195,13 @@ describe('host', () => {
   });
 
   it('getRemoteConfig reports the effective host and source without a connection check', async () => {
+    // Isolate DSH_HOME: without it this reads the operator's real ~/.dsh, where
+    // a Settings "Check connection" leaves a machine-local peer file, and the
+    // handler then legitimately reports source 'machine' — the assertions below
+    // would be describing the machine, not the code (found 2026-09-14, when a
+    // live probe turned this test red).
+    const prevHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-remote-config-'));
     const checkSpy = vi.spyOn(SyncService.prototype, 'checkConnection');
     try {
       const { rpcHandler } = await bootPlugin();
@@ -199,10 +209,17 @@ describe('host', () => {
       expect(res.ok).toBe(true);
       expect(typeof res.value.remoteHost).toBe('string');
       expect(res.value.remoteHost.length).toBeGreaterThan(0);
-      expect(['settings', 'env', 'default']).toContain(res.value.source);
+      // No peer file, no `domains.sync.remoteHost` and no env in this home, so
+      // the value can only come from the built-in default.
+      expect(res.value.source).toBe('default');
+      expect(['settings', 'env', 'default', 'machine']).toContain(res.value.source);
       expect(checkSpy).not.toHaveBeenCalled();
     } finally {
       checkSpy.mockRestore();
+      const tmp = process.env.DSH_HOME;
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+      if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
@@ -299,5 +316,72 @@ describe('host', () => {
     const res = await rpcHandler('tunnelRestore', { side: 'local' });
     expect(res.ok).toBe(false);
     expect(res.error.code).toBe('maestro-sync/confirm');
+  });
+
+  it('tunnelRestore RPC requires a fresh previewId even with confirm:true', async () => {
+    // The restore rewrites domains.tunnel in the shared store — the data class
+    // behind the 2026-08-26 / 2026-09-09 tunnel outages. A bare confirm:true
+    // must no longer be enough to perform that write.
+    const { rpcHandler } = await bootPlugin();
+    const missing = await rpcHandler('tunnelRestore', { side: 'local', confirm: true });
+    expect(missing.ok).toBe(false);
+    expect(missing.error.code).toBe('maestro-sync/preview');
+    const stale = await rpcHandler('tunnelRestore', { side: 'local', confirm: true, previewId: 'never-issued' });
+    expect(stale.ok).toBe(false);
+    expect(stale.error.code).toBe('maestro-sync/preview');
+  });
+
+  it('tunnelRestorePreview is read-only and fails closed without a profile', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-preview-'));
+    const prevHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = home;
+    try {
+      const { rpcHandler } = await bootPlugin();
+      const res = await rpcHandler('tunnelRestorePreview', { side: 'local' });
+      expect(res.ok).toBe(false);
+      expect(res.error.code).toBe('maestro-sync/tunnel');
+      // Nothing was written: no store file appears.
+      expect(fs.existsSync(path.join(home, 'dsh-maestro-config', 'settings.json'))).toBe(false);
+    } finally {
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('tunnelRestorePreview reports the profile and a single-use id, then the RPC consumes it', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tunnel-preview-'));
+    const prevHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = home;
+    try {
+      const prof = path.join(home, 'dsh-maestro-remote', 'tunnel-profiles', 'machine-a');
+      fs.mkdirSync(prof, { recursive: true });
+      const desired = { mode: 'named', id: 'a6a31b92', hostname: 'machine-a.ddtcorex.com' };
+      fs.writeFileSync(path.join(prof, 'settings-tunnel.json'), JSON.stringify({ domains: { tunnel: desired } }));
+      const { rpcHandler } = await bootPlugin();
+
+      const preview = await rpcHandler('tunnelRestorePreview', { side: 'local' });
+      expect(preview.ok).toBe(true);
+      expect(preview.value.profile).toBe('machine-a');
+      expect(preview.value.target).toBe('domains.tunnel');
+      expect(preview.value.desired).toEqual(desired);
+      expect(preview.value.changed).toBe(true);
+      expect(typeof preview.value.previewId).toBe('string');
+      // The preview itself wrote nothing.
+      expect(fs.existsSync(path.join(home, 'dsh-maestro-config', 'settings.json'))).toBe(false);
+
+      const applied = await rpcHandler('tunnelRestore', { side: 'local', confirm: true, previewId: preview.value.previewId });
+      expect(applied.ok).toBe(true);
+      expect(applied.value.profile).toBe('machine-a');
+
+      // Single-use: replaying the same id must fail.
+      const replay = await rpcHandler('tunnelRestore', { side: 'local', confirm: true, previewId: preview.value.previewId });
+      expect(replay.ok).toBe(false);
+      expect(replay.error.code).toBe('maestro-sync/preview');
+    } finally {
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

@@ -2,7 +2,7 @@ import * as React from 'react'
 import { useSync, type Bucket } from './use-sync.js'
 import { useBackupTarget } from './use-backup.js'
 import { R2SyncPanel } from './R2SyncPanel.js'
-import { ConfirmDialog } from './confirm-dialog.js'
+import { ConfirmDialog, TunnelRestoreDialog } from './confirm-dialog.js'
 import { Button, Icon, MaestroLogo, StatTile, formatFile, formatLastSync, humanSummary } from './ui.js'
 
 /**
@@ -16,12 +16,18 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
   const s = useSync(props.ctx)
   const b = useBackupTarget(props.ctx)
   const [tab, setTab] = React.useState<'remote' | 'r2'>('remote')
-  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, biPreview, biConfirmOpen, actionLimit, pages } = s
+  const { connection, checking, busy, error, result, status, remoteHost, remoteSource, lastSync, confirmOpen, preview, previewDirection, biPreview, biConfirmOpen, tunnelPreview, tunnelConfirmOpen, hostFieldError, actionLimit, pages } = s
   const st = b.status
 
   const isConnected = connection?.ok === true
   const isDisconnected = connection?.ok === false
-  const canSync = isConnected && !checking && !busy
+  // Machine identity is a real precondition, not decoration: a failed verdict
+  // (same machine on both sides, or the peer reporting our own id) means every
+  // plan below would be computed against the wrong peer, so it gates the
+  // actions instead of only rendering a line. `machines === null` = not checked
+  // yet, which the SSH gate already covers.
+  const machinesBlocked = s.machines?.ok === false
+  const canSync = isConnected && !checking && !busy && !machinesBlocked
   const planAgeSecs = preview?.expiresAt ? Math.max(0, Math.round((new Date(preview.expiresAt).getTime() - Date.now()) / 1000)) : 0
 
   // SSH target form state — prefilled from the saved/env/default target once
@@ -140,14 +146,20 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           data-sync-ssh-input=""
           data-testid="sync-ssh-host"
           value={hostInput}
-          onChange={(e) => setHostInput(e.target.value)}
+          onChange={(e) => { setHostInput(e.target.value); void s.setHostFieldError?.(null) }}
           placeholder="user@host"
           autoComplete="off"
           autoCapitalize="off"
           spellCheck={false}
           disabled={checking || busy}
           aria-describedby="sync-ssh-src"
+          aria-invalid={hostFieldError ? 'true' : undefined}
         />
+        {hostFieldError ? (
+          <span data-sync-field-error="" role="alert" data-testid="sync-ssh-host-error" style={{ gridColumn: '1 / -1', fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-state-error-primary)', overflowWrap: 'anywhere' }}>
+            {hostFieldError}
+          </span>
+        ) : null}
         <div data-sync-ssh-row="">
           <Button variant="outline" data-testid="sync-save-host" disabled={checking || busy || hostInput.trim().length === 0} onClick={() => void s.saveRemoteHost(hostInput.trim())}>
             Save
@@ -196,7 +208,10 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           <span data-sync-field-value="" data-testid="sync-remote-host">{remoteHost}</span>
         </div>
         <div data-sync-field="">
-          <span data-sync-field-label="">Last sync</span>
+          {/* Browser-local, client-only (localStorage). A CLI apply on this
+              machine never updates it, so the label says whose history this is
+              instead of implying it is the canonical sync state. */}
+          <span data-sync-field-label="">Last sync (this browser)</span>
           <span data-sync-field-value="" data-testid="sync-last-sync">{formatLastSync(lastSync)}</span>
         </div>
         {s.machines ? (
@@ -206,7 +221,7 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
             {s.machines.reason ? (
               <span data-sync-field-note="" data-testid="sync-machines-error" style={{ fontSize: 12, lineHeight: '16px', color: 'var(--dsw-alias-label-secondary)', overflowWrap: 'anywhere' }}>{s.machines.reason}</span>
             ) : null}
-            <Button variant="outline" size="sm" data-testid="sync-tunnel-restore" disabled={checking || busy} onClick={() => void s.handleTunnelRestore()}>
+            <Button variant="outline" size="sm" data-testid="sync-tunnel-restore" disabled={checking || busy} onClick={() => void s.handleTunnelRestorePreview()}>
               Restore tunnel
             </Button>
           </div>
@@ -239,6 +254,19 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
       </div>
 
       {/* Primary actions — sticky bottom bar on mobile (thumb reach) */}
+      {machinesBlocked ? (
+        <div data-sync-notice="" data-tone="bad" role="status" data-testid="sync-machines-gate">
+          <span data-sync-notice-icon="">
+            <Icon name="alert" />
+          </span>
+          <span data-sync-notice-main="">
+            <span data-sync-notice-title="">Sync is locked — machine identity check failed</span>
+            <span data-sync-notice-desc="">
+              {s.machines?.reason ?? 'The two sides do not look like two distinct machines.'} Fix the SSH target so it points at the OTHER machine, then Check connection again.
+            </span>
+          </span>
+        </div>
+      ) : null}
       <div data-sync-actions="" data-sync-actions-bar="">
         <Button variant="primary" icon="swap" disabled={!canSync} data-testid="sync-both-ways" onClick={() => void s.handleBidirectionalPreview()}>
           {busy ? 'Working…' : 'Sync both ways'}
@@ -349,6 +377,16 @@ export function SyncPanel(props: { ctx: any }): React.ReactElement {
           projectedPreview={biPreview.pullProjected}
           projectedNote="Projected — recomputed exact after the push lands."
           applyLabel="Apply both ways"
+        />
+      ) : null}
+
+      {/* Tunnel-restore dialog — the only place the domains.tunnel write exists */}
+      {tunnelConfirmOpen && tunnelPreview ? (
+        <TunnelRestoreDialog
+          preview={tunnelPreview}
+          busy={busy}
+          onCancel={s.cancelTunnelRestore}
+          onConfirm={() => void s.confirmTunnelRestore()}
         />
       ) : null}
 

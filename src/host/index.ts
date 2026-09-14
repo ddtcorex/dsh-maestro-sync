@@ -16,7 +16,7 @@ import { load, set as saveDomain } from '@ddtcorex/dsh-maestro-config-lib';
 import { validateHost } from './validation.js';
 import type { PreviewJobState, RemoteTarget } from './sync-types.js';
 import { runBidirectionalApply, runBidirectionalPreview } from './bidirectional.js';
-import { restoreLocalTunnel } from './tunnel-restore.js';
+import { readLocalTunnelProfile, restoreLocalTunnel } from './tunnel-restore.js';
 import { checkMachines, peerMachineId, readLocalMachineId } from './machine-id.js';
 import { restoreRemoteTunnel } from './tunnel-restore.js';
 
@@ -29,6 +29,22 @@ export const RPC_CHANNEL = '/dsh-maestro-sync';
 const previewJobs = new Map<string, PreviewJobState>();
 const MAX_PREVIEW_JOBS = 8;
 const PREVIEW_JOB_IDLE_MS = 120_000;
+
+/**
+ * Tunnel-restore previews. `restoreLocalTunnel` rewrites `domains.tunnel` in
+ * the shared store — the exact data class whose uncoordinated write took a
+ * machine's tunnel down on 2026-08-26 and 2026-09-09 (HTTP 530). It therefore
+ * follows the same contract as every other mutation in this package: a
+ * read-only preview first, then a single-use, TTL-bounded id carried into the
+ * confirmation dialog.
+ */
+type TunnelPreview = { side: 'local'; profile: string; expiresAt: number; current: unknown; desired: unknown };
+const tunnelPreviews = new Map<string, TunnelPreview>();
+const TUNNEL_PREVIEW_TTL_MS = 60_000;
+
+function pruneTunnelPreviews(now = Date.now()): void {
+  for (const [id, p] of tunnelPreviews) if (p.expiresAt <= now) tunnelPreviews.delete(id);
+}
 
 // Carrier helpers — dsh-client-connection decodes every RPC response as
 // { ok: true, value } | { ok: false, error: { code, message, details } }
@@ -593,12 +609,53 @@ export default {
                   return failCarrier(e?.message ?? String(e), e?.code ?? 'maestro-sync/machines');
                 }
               }
+              case 'tunnelRestorePreview': {
+                const a = (args ?? {}) as any;
+                const side = a.side === 'remote' ? 'remote' : 'local';
+                if (side === 'remote') {
+                  return failCarrier('remote tunnel restore has no preview yet — run it from the CLI with an explicit profile', 'maestro-sync/tunnel', { side });
+                }
+                const found = readLocalTunnelProfile(typeof a.profile === 'string' && a.profile ? { profileName: a.profile } : undefined);
+                if (!found.ok) {
+                  return failCarrier(
+                    found.code === 'INVALID_PROFILE' ? 'tunnel profile tunnel is not a named-tunnel object' : 'no tunnel profile found',
+                    'maestro-sync/tunnel',
+                    { side },
+                  );
+                }
+                let current: unknown = null;
+                try {
+                  const doc: any = await load();
+                  current = doc?.domains?.tunnel ?? null;
+                } catch {}
+                pruneTunnelPreviews();
+                const previewId = randomBytes(12).toString('hex');
+                const expiresAt = Date.now() + TUNNEL_PREVIEW_TTL_MS;
+                tunnelPreviews.set(previewId, { side: 'local', profile: found.profile, expiresAt, current, desired: found.tunnel });
+                return okCarrier({
+                  previewId,
+                  side,
+                  profile: found.profile,
+                  expiresAt,
+                  target: 'domains.tunnel',
+                  current,
+                  desired: found.tunnel,
+                  changed: JSON.stringify(current ?? null) !== JSON.stringify(found.tunnel),
+                });
+              }
               case 'tunnelRestore': {
                 const a = (args ?? {}) as any;
                 if (a.confirm !== true) return failCarrier('tunnel restore requires confirm:true', 'maestro-sync/confirm');
                 const side = a.side === 'remote' ? 'remote' : 'local';
                 if (side === 'local') {
-                  const r = await restoreLocalTunnel({ profileName: typeof a.profile === 'string' ? a.profile : undefined });
+                  // The write is bound to a preview taken moments ago: one
+                  // click can no longer rewrite domains.tunnel on its own.
+                  pruneTunnelPreviews();
+                  const previewId = typeof a.previewId === 'string' ? a.previewId : '';
+                  const preview = previewId ? tunnelPreviews.get(previewId) : undefined;
+                  if (!preview) return failCarrier('tunnel restore requires a fresh previewId', 'maestro-sync/preview', { side });
+                  tunnelPreviews.delete(previewId);
+                  const r = await restoreLocalTunnel({ profileName: preview.profile });
                   return r.ok
                     ? okCarrier({ ok: true, side, profile: r.profile })
                     : failCarrier(r.code === 'INVALID_PROFILE' ? 'tunnel profile tunnel is not a named-tunnel object' : 'no tunnel profile found', 'maestro-sync/tunnel', { side });

@@ -9,6 +9,19 @@ export type RemoteRestoreResult =
   | { ok: true; profile: string; changed: boolean; sha256: string }
   | { ok: false; code: 'BAD_PROFILE' };
 
+/** Everything a caller needs to DESCRIBE (not perform) a local restore. */
+export type LocalTunnelProfile =
+  | {
+      ok: true
+      profile: string
+      /** the named-tunnel OBJECT read from the profile, already shape-checked */
+      tunnel: Record<string, unknown>
+      cloudflaredSrc: string
+      cloudflaredDst: string
+      settingsPath: string
+    }
+  | { ok: false; code: 'NO_PROFILE' | 'INVALID_PROFILE' };
+
 /** Profile names are single path segments; mirrors the remote-agent allowlist. */
 export function isSafeProfileName(name: string): boolean {
   if (!name || name.startsWith('.') || name.includes('..') || name.includes('/')) return false;
@@ -33,7 +46,13 @@ export function isValidTunnelDomain(v: unknown): v is Record<string, unknown> {
  * from this machine's own profile dir. Never throws; profiles may not
  * exist on CI.
  */
-export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?: string }): Promise<LocalRestoreResult> {
+/**
+ * Read-only resolution of this machine's tunnel profile: which profile would
+ * be restored, and the named-tunnel object it carries. Performs no write, so a
+ * read-only preview can show the operator exactly what a restore would change
+ * before anything touches the shared store. Never throws.
+ */
+export function readLocalTunnelProfile(opts?: { dshHome?: string; profileName?: string }): LocalTunnelProfile {
   try {
     const dshHome = opts?.dshHome ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh');
     const profilesRoot = path.join(dshHome, 'dsh-maestro-remote', 'tunnel-profiles');
@@ -67,40 +86,59 @@ export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?
     // (config-lib recreates it); a missing store must not skip the restore.
     if (!fs.existsSync(tunnelSettingsPath)) return { ok: false, code: 'NO_PROFILE' };
 
+    const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
+    const tunnelDomain = tunnelJson?.domains?.tunnel;
+    if (!isValidTunnelDomain(tunnelDomain)) return { ok: false, code: 'INVALID_PROFILE' };
+    return { ok: true, profile: profileName, tunnel: tunnelDomain, cloudflaredSrc, cloudflaredDst, settingsPath };
+  } catch {
+    return { ok: false, code: 'NO_PROFILE' };
+  }
+}
+
+/**
+ * Local tunnel profile restore: re-patches the moved shared store
+ * (<dsh>/dsh-maestro-config/settings.json via config-lib) domains.tunnel
+ * from this machine's own profile dir. Never throws; profiles may not
+ * exist on CI.
+ *
+ * The mutation itself lives here; the decision to run it belongs to the
+ * caller's preview/confirm contract (see the `tunnelRestorePreview` /
+ * `tunnelRestore` RPC pair in `index.ts`) — this function is never called
+ * from a bare click.
+ */
+export async function restoreLocalTunnel(opts?: { dshHome?: string; profileName?: string }): Promise<LocalRestoreResult> {
+  const found = readLocalTunnelProfile(opts);
+  if (!found.ok) return { ok: false, code: found.code };
+  const { profile, tunnel, cloudflaredSrc, cloudflaredDst, settingsPath } = found;
+
+  try {
+    if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {
+      fs.copyFileSync(cloudflaredSrc, cloudflaredDst);
+      try {
+        fs.chmodSync(cloudflaredDst, 0o600);
+      } catch {}
+    }
+  } catch {}
+
+  try {
     try {
-      if (fs.existsSync(cloudflaredSrc) && fs.existsSync(path.dirname(cloudflaredDst))) {
-        fs.copyFileSync(cloudflaredSrc, cloudflaredDst);
-        try {
-          fs.chmodSync(cloudflaredDst, 0o600);
-        } catch {}
+      const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
+      if (typeof cfgLib.set === 'function') {
+        await cfgLib.set('tunnel', tunnel);
+        return { ok: true, profile };
       }
     } catch {}
-
+    const raw = fs.readFileSync(settingsPath, 'utf-8');
+    const doc = JSON.parse(raw);
+    doc.domains = doc.domains || {};
+    doc.domains.tunnel = tunnel;
+    const tmp = settingsPath + '.tmp.' + Math.random().toString(16).slice(2, 6);
+    fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf-8');
+    fs.renameSync(tmp, settingsPath);
     try {
-      const tunnelJson = JSON.parse(fs.readFileSync(tunnelSettingsPath, 'utf-8'));
-      const tunnelDomain = tunnelJson?.domains?.tunnel;
-      if (!isValidTunnelDomain(tunnelDomain)) return { ok: false, code: 'INVALID_PROFILE' };
-      try {
-        const cfgLib: any = await import('@ddtcorex/dsh-maestro-config-lib');
-        if (typeof cfgLib.set === 'function') {
-          await cfgLib.set('tunnel', tunnelDomain);
-          return { ok: true, profile: profileName };
-        }
-      } catch {}
-      const raw = fs.readFileSync(settingsPath, 'utf-8');
-      const doc = JSON.parse(raw);
-      doc.domains = doc.domains || {};
-      doc.domains.tunnel = tunnelDomain;
-      const tmp = settingsPath + '.tmp.' + Math.random().toString(16).slice(2, 6);
-      fs.writeFileSync(tmp, JSON.stringify(doc, null, 2) + '\n', 'utf-8');
-      fs.renameSync(tmp, settingsPath);
-      try {
-        fs.chmodSync(settingsPath, 0o600);
-      } catch {}
-      return { ok: true, profile: profileName };
-    } catch {
-      return { ok: false, code: 'NO_PROFILE' };
-    }
+      fs.chmodSync(settingsPath, 0o600);
+    } catch {}
+    return { ok: true, profile };
   } catch {
     return { ok: false, code: 'NO_PROFILE' };
   }

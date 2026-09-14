@@ -273,6 +273,12 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
 [data-r2-field-input]:focus-visible { outline: 2px solid var(--dsw-alias-border-l2); outline-offset: 2px; }
 [data-r2-field-input]:disabled { opacity: 0.6; }
 [data-r2-field-hint] { font-size: 11px; line-height: 14px; color: var(--dsw-alias-label-tertiary); }
+/* Field-level validation feedback: the message must sit under the input it
+   names, not only in the panel-wide banner. */
+[data-r2-field-error] { font-size: 11px; line-height: 15px; color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }
+[data-r2-field-input][aria-invalid="true"] { border-color: var(--dsw-alias-state-error-primary); }
+[data-sync-field-error] { font-size: 12px; line-height: 16px; color: var(--dsw-alias-state-error-primary); overflow-wrap: anywhere; }
+[data-sync-ssh-input][aria-invalid="true"] { border-color: var(--dsw-alias-state-error-primary); }
 [data-r2-provider-row] { display: flex; gap: 8px; }
 [data-r2-provider-opt] { flex: 1 1 0; min-height: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 [data-r2-provider-opt][aria-pressed="true"] { background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l1); }
