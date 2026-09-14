@@ -290,19 +290,21 @@ button[data-sync-stat]:focus-visible { outline: 2px solid var(--dsw-alias-border
   [data-sync-ssh-row] > [data-sync-btn] { min-height: 48px !important; }
 }
 
-/* iOS field floor opt-out (dsh-maestro-mobile zoom guard).
+/* iOS 16px field floor hold (dsh-maestro-mobile zoom guard).
    Every text field on the page is held at 16px under html[data-mobile-nav-ios]
    inside this same predicate, because iOS WebKit magnifies the visual viewport
-   for a focused field below 16px. That floor picks fields this panel never
-   declared, so on a phone they render 2-3px larger than the labels beside them.
-   Restore plain inheritance for our own fields only. The :not(#...) clause
-   matches every element (no node carries that id) and exists purely for
-   id-level specificity: the floor carries ten :not([type=...]) clauses, so an
-   equal-specificity !important rule loses and the fields grow back. */
+   for a focused field below 16px. An earlier revision of this panel opted its
+   own fields back out to inherit for a compact 13px scale — and every tap on
+   those fields zoomed the page on iPhone, with modal sheets never blurring
+   back. Function beats pixels: hold the same 16px here (the :not(#...) clause
+   matches every element — no node carries that id — and exists purely for
+   id-level specificity, so this declaration keeps winning over competing
+   field rules). Android and desktop never carry the marker, so the compact
+   scale they were designed with is untouched. */
 @media (max-width: 1023px) and (pointer: coarse) {
   html[data-mobile-nav-ios] [data-sync-root] input:not(#dsh-field-floor-opt-out),
   html[data-mobile-nav-ios] [data-sync-root] textarea:not(#dsh-field-floor-opt-out),
-  html[data-mobile-nav-ios] [data-sync-root] select:not(#dsh-field-floor-opt-out) { font-size:inherit !important; }
+  html[data-mobile-nav-ios] [data-sync-root] select:not(#dsh-field-floor-opt-out) { font-size:16px !important; }
 }
 `
 
