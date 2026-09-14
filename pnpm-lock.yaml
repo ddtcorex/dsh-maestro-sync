@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@ddtcorex/dsh-maestro-config-lib':
-        specifier: workspace:^0.1.0
+        specifier: workspace:^0.2.0
         version: link:../dsh-maestro-config-lib
       '@deepseek-ai/cordis':
         specifier: ^4.0.1

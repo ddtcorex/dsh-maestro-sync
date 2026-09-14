@@ -195,6 +195,13 @@ describe('host', () => {
   });
 
   it('getRemoteConfig reports the effective host and source without a connection check', async () => {
+    // Isolate DSH_HOME: without it this reads the operator's real ~/.dsh, where
+    // a Settings "Check connection" leaves a machine-local peer file, and the
+    // handler then legitimately reports source 'machine' — the assertions below
+    // would be describing the machine, not the code (found 2026-09-14, when a
+    // live probe turned this test red).
+    const prevHome = process.env.DSH_HOME;
+    process.env.DSH_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-remote-config-'));
     const checkSpy = vi.spyOn(SyncService.prototype, 'checkConnection');
     try {
       const { rpcHandler } = await bootPlugin();
@@ -202,10 +209,17 @@ describe('host', () => {
       expect(res.ok).toBe(true);
       expect(typeof res.value.remoteHost).toBe('string');
       expect(res.value.remoteHost.length).toBeGreaterThan(0);
-      expect(['settings', 'env', 'default']).toContain(res.value.source);
+      // No peer file, no `domains.sync.remoteHost` and no env in this home, so
+      // the value can only come from the built-in default.
+      expect(res.value.source).toBe('default');
+      expect(['settings', 'env', 'default', 'machine']).toContain(res.value.source);
       expect(checkSpy).not.toHaveBeenCalled();
     } finally {
       checkSpy.mockRestore();
+      const tmp = process.env.DSH_HOME;
+      if (prevHome === undefined) delete process.env.DSH_HOME;
+      else process.env.DSH_HOME = prevHome;
+      if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
