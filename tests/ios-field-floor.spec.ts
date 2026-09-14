@@ -5,10 +5,11 @@ import { describe, expect, it } from 'vitest'
 
 // iOS WebKit magnifies the visual viewport when a focused field computes below 16px, so
 // dsh-maestro-mobile holds every text field at a 16px floor under
-// html[data-mobile-nav-ios], inside `(max-width: 1023px) and (pointer: coarse)`. That floor
-// picks elements this panel does not declare, so its fields would render 2-3px larger than
-// the labels and helper text beside them. The panel opts its own fields out of the floor and
-// keeps the type scale it was designed with.
+// html[data-mobile-nav-ios]. An earlier revision of this panel opted its own fields back
+// out to `inherit` for a compact 13px scale — and every tap on those fields zoomed the
+// page on iPhone (user report). Function beats pixels: this panel holds its fields at
+// the same 16px on iOS. Android and desktop never carry the marker, so the compact
+// scale they were designed with is untouched.
 const source = readFileSync(
   resolve(dirname(fileURLToPath(import.meta.url)), '../src/client/index.tsx'),
   'utf8',
@@ -39,32 +40,33 @@ function blockAt(query: string): string {
   return ''
 }
 
-describe('Maestro Sync settings panel opts out of the iOS field floor', () => {
+describe('Maestro Sync settings panel holds the iOS 16px field floor', () => {
   it('never mentions the iOS marker outside the floor predicate', () => {
     const before = rules.slice(0, rules.indexOf(FLOOR_QUERY))
     expect(before).not.toContain('data-mobile-nav-ios')
   })
 
-  it('pins the panel fields back to their own inherited size on iOS', () => {
+  it('holds the panel fields at 16px on iOS (opting out re-enables focus zoom)', () => {
     const block = blockAt(FLOOR_QUERY)
     expect(block).toContain('html[data-mobile-nav-ios] [data-sync-root] input')
     expect(block).toContain('[data-sync-root] textarea')
     expect(block).toContain('[data-sync-root] select')
-    expect(block).toMatch(/font-size:\s*inherit\s*!important/)
+    expect(block).toMatch(/font-size:\s*16px\s*!important/)
+    expect(block).not.toMatch(/font-size:\s*inherit\s*!important/)
   })
 
   it('out-ranks the floor selector, which carries ten :not([type=…]) clauses', () => {
-    // id-level specificity is what beats that chain; without it the floor wins and the
-    // fields silently grow back to 16px
+    // id-level specificity keeps this declaration winning over the floor; without it a
+    // later equal-specificity rule could silently shrink the fields back below 16px
     expect(blockAt(FLOOR_QUERY)).toMatch(/:not\(#dsh-field-floor-opt-out\)/)
   })
 
   it('writes a well-formed declaration block (a stray brace silently voids the rule)', () => {
-    // Found the hard way: `{{ font-size:inherit !important; }}` keeps every string
+    // Found the hard way: `{{ font-size:16px !important; }}` keeps every string
     // assertion above happy, yet the CSS parser drops the declaration and the fields
-    // stay at the 16px floor. Pin the block's exact shape.
+    // fall back below the floor. Pin the block's exact shape.
     const block = blockAt(FLOOR_QUERY)
     expect(block).not.toContain('{{')
-    expect(block).toMatch(/\{\s*font-size:\s*inherit\s*!important;\s*\}/)
+    expect(block).toMatch(/\{\s*font-size:\s*16px\s*!important;\s*\}/)
   })
 })
