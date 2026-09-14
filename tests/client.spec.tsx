@@ -415,8 +415,11 @@ describe('SyncPanel', () => {
       const cf = checkFlowBranches(method);
       if (cf) return cf;
       if (method === 'checkMachines') return carrier({ ok: true, mode: 'bidirectional', localId: 'machine-a', remoteId: 'machine-b', from: 'machine-a', to: 'machine-b' });
+      if (method === 'tunnelRestorePreview') {
+        return carrier({ previewId: 'tp-1', side: 'local', profile: 'machine-a', expiresAt: new Date(Date.now() + 60_000).toISOString(), target: 'domains.tunnel', current: { mode: 'named', hostname: 'stale' }, desired: { mode: 'named', hostname: 'machine-a.example.com' }, changed: true });
+      }
       if (method === 'tunnelRestore') {
-        expect(args).toMatchObject({ side: 'local', confirm: true });
+        expect(args).toMatchObject({ side: 'local', confirm: true, previewId: 'tp-1' });
         return carrier({ ok: true, side: 'local', profile: 'machine-a' });
       }
       return { ok: true };
@@ -424,11 +427,20 @@ describe('SyncPanel', () => {
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
     await driveCheck(user);
     expect(await screen.findByTestId('sync-machines')).toHaveTextContent(/machine-a.*machine-b/);
+    // One click never writes: it opens a dialog bound to a read-only preview
+    // of exactly what the restore would change.
     await user.click(screen.getByTestId('sync-tunnel-restore'));
+    await waitFor(() => expect(statusCalls(rpc)).toContain('tunnelRestorePreview'));
+    expect(statusCalls(rpc)).not.toContain('tunnelRestore');
+    await screen.findByTestId('sync-tunnel-dialog');
+    expect(await screen.findByTestId('sync-tunnel-current')).toHaveTextContent('hostname=stale');
+    expect(await screen.findByTestId('sync-tunnel-desired')).toHaveTextContent('hostname=machine-a.example.com');
+    // The write exists only inside the dialog, bound to the preview id.
+    await user.click(screen.getByTestId('sync-tunnel-confirm'));
     await waitFor(() => expect(statusCalls(rpc)).toContain('tunnelRestore'));
   });
 
-  it('names the machines failure inline instead of hiding the line when checkMachines throws', async () => {
+  it('names the machines failure inline and locks the actions when checkMachines throws', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
@@ -441,14 +453,18 @@ describe('SyncPanel', () => {
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
     await driveCheck(user);
-    // the tab still unlocks — the machines line is best-effort, never blocking
-    await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
-    // ...but the line stays visible with "?" ids and names the failure
+    // The line stays visible with "?" ids and names the failure...
     expect(await screen.findByTestId('sync-machines')).toHaveTextContent('?');
     expect(screen.getByTestId('sync-machines-error')).toHaveTextContent(/remoteHome/);
+    // ...and a failed verdict GATES the actions: a plan computed against the
+    // wrong peer must never be offered.
+    await waitFor(() => expect(screen.getByTestId('sync-machines-gate')).toHaveTextContent(/machine identity/i));
+    expect(screen.getByTestId('sync-preview-pull')).toBeDisabled();
+    expect(screen.getByTestId('sync-preview-push')).toBeDisabled();
+    expect(screen.getByTestId('sync-both-ways')).toBeDisabled();
   });
 
-  it('names the machines failure inline when checkMachines returns a fail carrier', async () => {
+  it('names the machines failure inline and locks the actions when checkMachines returns a fail carrier', async () => {
     const user = userEvent.setup();
     const rpc = vi.fn(async (_ch: string, method: string, args: any) => {
       if (method === 'status' && !args?.bucket) return carrier({ ok: true, remoteHost: 'sync-host', connection: { ok: true, host: 'sync-host' }, localOnly: 2, remoteOnly: 0, both: 0 });
@@ -460,8 +476,9 @@ describe('SyncPanel', () => {
     });
     render(React.createElement(SyncPanel, { ctx: makeCtx(rpc) }));
     await driveCheck(user);
-    await waitFor(() => expect(screen.getByTestId('sync-preview-pull')).toBeEnabled());
     expect(await screen.findByTestId('sync-machines')).toHaveTextContent('?');
     expect(screen.getByTestId('sync-machines-error')).toHaveTextContent(/remoteHome/);
+    await waitFor(() => expect(screen.getByTestId('sync-machines-gate')).toHaveTextContent(/machine identity/i));
+    expect(screen.getByTestId('sync-preview-pull')).toBeDisabled();
   });
 });

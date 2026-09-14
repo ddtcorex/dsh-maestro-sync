@@ -51,6 +51,14 @@ export function useSync(ctx: any) {
   const [preview, setPreview] = React.useState<any>(null)
   const [previewDirection, setPreviewDirection] = React.useState<'pull' | 'push'>('pull')
   const [confirmOpen, setConfirmOpen] = React.useState(false)
+  // Tunnel restore: read-only preview + its own confirmation dialog. The
+  // mutation rewrites domains.tunnel in the shared store, so it may never fire
+  // from the button itself.
+  const [tunnelPreview, setTunnelPreview] = React.useState<any>(null)
+  const [tunnelConfirmOpen, setTunnelConfirmOpen] = React.useState(false)
+  // Field-level error for the SSH target — the server validates, but the
+  // message must land under the field it belongs to, not in a generic banner.
+  const [hostFieldError, setHostFieldError] = React.useState<string | null>(null)
   // Bidirectional round trip: one combined preview (exact push + projected
   // pull), one confirmation, one server-side push-then-pull apply.
   const [biPreview, setBiPreview] = React.useState<any>(null)
@@ -304,11 +312,15 @@ export function useSync(ctx: any) {
   const saveRemoteHost = React.useCallback(
     async (host: string): Promise<{ ok: boolean; error?: string }> => {
       setError('')
+      setHostFieldError(null)
       try {
         const res: any = await call('saveRemoteHost', { host })
         if (res?.ok === false) {
-          setError(res?.error ?? 'save failed')
-          return { ok: false, error: res?.error ?? 'save failed' }
+          const msg = res?.error ?? 'save failed'
+          // The failure is about the field the user just typed into: say it
+          // there (aria-describedby) rather than only in the panel banner.
+          setHostFieldError(msg)
+          return { ok: false, error: msg }
         }
         if (res?.remoteHost) {
           setRemoteHost(String(res.remoteHost))
@@ -317,7 +329,7 @@ export function useSync(ctx: any) {
         return { ok: true }
       } catch (e: any) {
         const msg = e?.message ?? String(e)
-        setError(msg)
+        setHostFieldError(msg)
         return { ok: false, error: msg }
       }
     },
@@ -372,34 +384,77 @@ export function useSync(ctx: any) {
   }, [call, loadStatus, loadMachines, remoteHost])
 
   /**
-   * Explicit local tunnel restore (confirm-first via the RPC flag).
-   * Surfaces the patched profile in the result notice.
+   * Tunnel restore, step 1 — read-only preview.
+   *
+   * The restore rewrites `domains.tunnel` in the shared settings store; the
+   * host only performs it against a fresh, single-use preview id. So the button
+   * opens a dialog describing exactly what would change, and nothing is
+   * written until the operator confirms inside it.
    */
-  const handleTunnelRestore = React.useCallback(async (): Promise<void> => {
+  const handleTunnelRestorePreview = React.useCallback(async (): Promise<void> => {
     setError('')
+    setResult(null)
+    setBusy(true)
     try {
-      const res: any = await call('tunnelRestore', { side: 'local', confirm: true })
+      const res: any = await call('tunnelRestorePreview', { side: 'local' })
+      if (res?.ok === false) {
+        setError(res?.error ?? 'tunnel restore preview failed')
+        return
+      }
+      if (!res?.previewId) {
+        setError('Tunnel restore preview finished without a result')
+        return
+      }
+      setTunnelPreview(res)
+      setTunnelConfirmOpen(true)
+    } catch (e: any) {
+      setError(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
+    }
+  }, [call])
+
+  /** Tunnel restore, step 2 — the only call that writes, bound to the preview. */
+  const confirmTunnelRestore = React.useCallback(async (): Promise<void> => {
+    const previewId = tunnelPreview?.previewId
+    if (!previewId) return
+    setError('')
+    setBusy(true)
+    try {
+      const res: any = await call('tunnelRestore', { side: 'local', previewId, confirm: true })
+      setTunnelConfirmOpen(false)
+      setTunnelPreview(null)
       if (res && res.ok) {
         setResult({ kind: 'tunnel-restore', ok: true, text: `Tunnel restored from profile ${res.profile ?? 'auto'} (local)` })
       } else {
         setError(res?.error ?? 'tunnel restore failed')
       }
     } catch (e: any) {
+      setTunnelConfirmOpen(false)
+      setTunnelPreview(null)
       setError(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
     }
-  }, [call, setError, setResult])
+  }, [tunnelPreview, call])
+
+  const cancelTunnelRestore = React.useCallback(() => {
+    setTunnelConfirmOpen(false)
+    setTunnelPreview(null)
+  }, [])
 
   React.useEffect(() => {
-    if (!confirmOpen && !biConfirmOpen) return
+    if (!confirmOpen && !biConfirmOpen && !tunnelConfirmOpen) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         cancelDialog()
         cancelBidirectionalDialog()
+        cancelTunnelRestore()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [confirmOpen, biConfirmOpen, cancelDialog, cancelBidirectionalDialog])
+  }, [confirmOpen, biConfirmOpen, tunnelConfirmOpen, cancelDialog, cancelBidirectionalDialog, cancelTunnelRestore])
 
   return {
     remoteHost,
@@ -412,11 +467,15 @@ export function useSync(ctx: any) {
     busy,
     result,
     error,
+    hostFieldError,
+    setHostFieldError,
     preview,
     previewDirection,
     confirmOpen,
     biPreview,
     biConfirmOpen,
+    tunnelPreview,
+    tunnelConfirmOpen,
     actionLimit,
     progress,
     pages,
@@ -428,7 +487,9 @@ export function useSync(ctx: any) {
     saveRemoteHost,
     checkConnection,
     loadMachines,
-    handleTunnelRestore,
+    handleTunnelRestorePreview,
+    confirmTunnelRestore,
+    cancelTunnelRestore,
     handlePreview,
     handleApply,
     cancelDialog,
