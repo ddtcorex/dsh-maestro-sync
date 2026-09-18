@@ -3,7 +3,17 @@ packages:
   - ../dsh-maestro-config-lib
 allowBuilds:
   esbuild: true
+# Day-zero DSH prereleases: minimumReleaseAgeExclude keeps only the FIRST
+# entry per package name, so an appended version stays gated while the stale
+# entry shadows it (observed 2026-09-18) — the age gate stays off.
+minimumReleaseAge: 0
 minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-chunked-list@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-credentials@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-timeout@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-typert-protocol@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-util-crypto@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-tools@0.1.6-alpha.2'
   - '@deepseek-ai/cosmokit@1.8.3'
   - '@deepseek-ai/dsh-agent@0.1.2-alpha.2'
   - '@deepseek-ai/dsh-brand@0.1.2-alpha.2'
@@ -21,3 +31,8 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-util-crypto@0.1.2-alpha.2'
   - '@deepseek-ai/dsh-util-values@0.1.2-alpha.2'
   - '@deepseek-ai/schemastery@3.18.2'
+  - '@deepseek-ai/dsh-brand@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-ptc-runtime@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-sandbox-policy@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-sandbox@0.1.6-alpha.2'
+  - '@deepseek-ai/dsh-util-values@0.1.6-alpha.2'
