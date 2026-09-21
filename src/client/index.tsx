@@ -319,7 +319,7 @@ function apply(ctx: any): void {
   ctx.effect(() => {
     const dispose = slots.inject('settings.section', () =>
       slots.register(
-        { name: 'settings.section', id: 'maestro-sync', order: 26, label: () => 'Maestro Sync' },
+        { name: 'settings.section', id: 'maestro-sync', order: 28, label: () => 'Maestro Sync' },
         () => React.createElement(SyncPanel, { ctx }),
       ),
     )
