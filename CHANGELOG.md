@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.4.0] - 2026-09-22
+
+### Fixed
+
+- **The settings fields keep their own type scale on iOS** — hold the 16px
+  floor rather than opting out, so taps stop magnifying the viewport (#31).
+- **Tunnel restore is confirmed, the machine check gates it, and field errors
+  are inline** (#30).
+- Sort Maestro settings tabs after archived sessions (#35).
+
+### Changed
+
+- Follow `@ddtcorex/dsh-maestro-config-lib` to `^0.3.0` and the DSH
+  `0.1.7-alpha.1` peer pins (#36).
+- Declare `@deepseek-ai/dsh-llm` in the test setup explicitly (#34), and move
+  to vitest 3 so the suite loads the DSH 0.1.6 peers (#33).
+
 ## [0.3.2] - 2026-09-14
 
 ### Fixed
