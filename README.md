@@ -73,9 +73,12 @@ S3-compatible bucket through a dependency-free SigV4 client.
   hidden in phase 1).
 - **Secret material**: environment (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`,
   AWS `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) or a private `0600` sidecar
-  file in the plugin's own runtime dir — never in settings, never logged,
-  never returned by RPC/tools (status shows only `Env | Private file | Not
-  configured` and the bucket/prefix).
+  file at `~/.dsh/dsh-maestro-sync/backup-secrets.json`
+  (`{"accessKeyId":"…","secretAccessKey":"…"}`) — never in settings, never
+  logged, never returned by RPC/tools (status shows only `Env | Private file |
+  Not configured` and the bucket/prefix). With neither source the backup tools
+  refuse with `MISSING_BACKUP_SECRETS` and the message names both the accepted
+  environment variables and the exact sidecar path.
 - **Preview Backup** is read-only: it compares current eligible hashes against
   the last manifest in the bucket (no object transfer). **Apply** is the only
   upload route: it PUTs missing blobs (content-addressed, idempotent), writes

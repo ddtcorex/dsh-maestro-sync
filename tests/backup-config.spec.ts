@@ -39,7 +39,18 @@ describe('backup config', () => {
   });
 
   it('throws MISSING_BACKUP_SECRETS when no secret source resolves', async () => {
-    await expect(resolveBackupTarget({ domains: { sync: { r2: { accountId: 'acct', bucket: 'b' } } } }, {} as any)).rejects.toMatchObject({ code: 'MISSING_BACKUP_SECRETS' });
+    // The refusal must be self-serving: name both accepted sources and the
+    // exact sidecar path for the resolved home, so an operator can fix it
+    // without reading the source (hit live on 2026-09-22).
+    const err: any = await resolveBackupTarget(
+      { domains: { sync: { r2: { accountId: 'acct', bucket: 'b' } } } },
+      {} as any,
+      '/tmp/no-sidecar-dsh',
+    ).catch((e) => e);
+    expect(err).toMatchObject({ code: 'MISSING_BACKUP_SECRETS' });
+    expect(String(err.message)).toContain('R2_ACCESS_KEY_ID');
+    expect(String(err.message)).toContain('AWS_ACCESS_KEY_ID');
+    expect(String(err.message)).toContain('/tmp/no-sidecar-dsh/dsh-maestro-sync/backup-secrets.json');
   });
 
   it('aws provider resolves from the same config shape (UI hidden phase 1)', async () => {

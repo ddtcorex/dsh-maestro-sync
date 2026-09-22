@@ -79,10 +79,17 @@ export async function resolveBackupTarget(
     } catch {}
   }
   if (!secrets) {
-    throw Object.assign(new Error('backup requires access key secret material (environment or private sidecar)'), {
-      phase: 'validate',
-      code: 'MISSING_BACKUP_SECRETS',
-    });
+    throw Object.assign(
+      new Error(
+        'backup requires access key secret material: set R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY '
+        + '(or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY) in the environment, '
+        + `or write a 0600 ${sidecar}`,
+      ),
+      {
+        phase: 'validate',
+        code: 'MISSING_BACKUP_SECRETS',
+      },
+    );
   }
   return { config: { provider, endpoint, region, bucket, prefix }, secrets, source };
 }
