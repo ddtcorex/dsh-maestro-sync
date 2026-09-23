@@ -47,7 +47,9 @@ describe('host', () => {
       expect(definition.output.render({}, { text: '{"ok":true}' })).toEqual([{ type: 'text', text: '{"ok":true}' }]);
     }
     expect(handle).toHaveBeenCalledTimes(1);
-    expect(handle).toHaveBeenCalledWith('/dsh-maestro-sync', expect.any(Function), { authority: 'loopback' });
+    // handle() takes exactly (channel, handler) — there is no authority option.
+    expect(handle).toHaveBeenCalledWith('/dsh-maestro-sync', expect.any(Function));
+    expect(handle.mock.calls[0]).toHaveLength(2);
   });
 
   it('legacy pull/push RPC are preview-only: no dryRun can apply, apply is never implied', async () => {
@@ -296,7 +298,7 @@ describe('host', () => {
     const home = mkdtempSync(join(tmpdir(), 'sync-machines-'));
     writeFileSync(join(home, 'machine-id'), 'machine-a\n');
     process.env.DSH_HOME = home;
-    const targetSpy = vi.spyOn(SyncService.prototype, 'resolveTarget').mockResolvedValue({ host: 'sync-host', dshRoot: '/home/kai/.dsh' });
+    const targetSpy = vi.spyOn(SyncService.prototype, 'resolveTarget').mockResolvedValue({ host: 'sync-host', dshRoot: '/home/user/.dsh' });
     const idSpy = vi.spyOn(SshRsyncTransport.prototype, 'readMachineId').mockResolvedValue('machine-b');
     try {
       const { rpcHandler } = await bootPlugin();
