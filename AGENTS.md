@@ -57,7 +57,7 @@ profile) when you want it.
 ## Layout
 
 - `src/host/index.ts` — host `apply()`: registers the preview/apply/status tools
-  and the `/dsh-maestro-sync` RPC channel (loopback authority).
+  and the `/dsh-maestro-sync` RPC channel.
 - `src/host/peer-host.ts` — this machine's own peer target
   (`<dsh>/dsh-maestro-sync/peer.json`, mode 0600). Machine-local by design, and
   it outranks the shared store's `domains.sync.remoteHost`, which travels

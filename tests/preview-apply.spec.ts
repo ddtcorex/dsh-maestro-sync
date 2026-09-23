@@ -24,7 +24,7 @@ describe('preview/apply contract', () => {
       const svc = new SyncService({
         localDsh: localRoot,
         remote: 'sync-host',
-        remoteDsh: '/home/kai/.dsh',
+        remoteDsh: '/home/user/.dsh',
         fs: fs as any,
         runner: stubRunner as any,
         transport: fake.transport as any,
@@ -56,7 +56,7 @@ describe('preview/apply contract', () => {
       const svc = new SyncService({
         localDsh: localRoot,
         remote: 'sync-host',
-        remoteDsh: '/home/kai/.dsh',
+        remoteDsh: '/home/user/.dsh',
         fs: fs as any,
         runner: stubRunner as any,
         transport: fake.transport as any,
@@ -90,7 +90,7 @@ describe('preview/apply contract', () => {
       const svc = new SyncService({
         localDsh: localRoot,
         remote: 'sync-host',
-        remoteDsh: '/home/kai/.dsh',
+        remoteDsh: '/home/user/.dsh',
         fs: fs as any,
         runner: stubRunner as any,
         transport: fake.transport as any,
@@ -111,7 +111,7 @@ describe('preview/apply contract', () => {
       const svc = new SyncService({
         localDsh: localRoot,
         remote: 'sync-host',
-        remoteDsh: '/home/kai/.dsh',
+        remoteDsh: '/home/user/.dsh',
         fs: fs as any,
         runner: stubRunner as any,
         transport: fake.transport as any,
@@ -125,17 +125,18 @@ describe('preview/apply contract', () => {
     }
   });
 
-  it('RPC exposes preview and apply via the loopback channel', async () => {
+  it('RPC exposes preview and apply over the connection channel', async () => {
     const { default: plugin, RPC_CHANNEL } = await import('../src/host/index.js');
     expect(RPC_CHANNEL).toBe('/dsh-maestro-sync');
     expect(plugin.inject).toEqual(expect.arrayContaining(['tools', 'connection']));
 
     const register = vi.fn(() => () => {});
     let rpcHandler: any = null;
-    const handle = vi.fn((channel: string, handler: any, opts: any) => {
+    // Mirrors the real HostConnectionRpc.handle(channel, handler) — two
+    // parameters. Loopback is a transport property, never a registration option.
+    const handle = vi.fn((channel: string, handler: any) => {
       rpcHandler = handler;
       expect(channel).toBe('/dsh-maestro-sync');
-      expect(opts).toEqual({ authority: 'loopback' });
       return () => {};
     });
     const effect = vi.fn((fn: any) => fn());

@@ -394,7 +394,9 @@ export default {
       ),
     );
 
-    // Loopback RPC for the Settings UI
+    // RPC for the Settings UI. Reachability is loopback because the browser
+    // dials the local host; registration cannot request it — handle() takes
+    // exactly (channel, handler).
     ctx.effect(() =>
       ctx.connection.rpc.handle(
         RPC_CHANNEL,
@@ -729,7 +731,6 @@ export default {
             return failCarrier(e?.message ?? String(e), e?.code ?? 'maestro-sync/rpc', details);
           }
         },
-        { authority: 'loopback' },
       ),
     );
   },
