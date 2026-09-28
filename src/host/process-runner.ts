@@ -32,7 +32,13 @@ export class NodeProcessRunner implements ProcessRunner {
   async run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; onLine?: (line: string) => void }): Promise<ProcessResult> {
     return new Promise<ProcessResult>((resolve, reject) => {
       // argv-only, never shell — caller may pass filenames with spaces/metachars as single argv items
-      const child = this.spawnChild(file, args as string[], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+      // Detached on POSIX so the child leads its own process group; killTree() needs
+      // that to reach the grandchildren it spawns.
+      const child = this.spawnChild(file, args as string[], {
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
+      });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let stdoutLen = 0;
@@ -58,8 +64,22 @@ export class NodeProcessRunner implements ProcessRunner {
         finish();
       };
 
-      /** Kill the child directly. Task 2 widened this to the whole process tree. */
-      const killChild = () => {
+      /**
+       * Kill the child and the processes it spawned.
+       *
+       * SIGKILL to the direct child alone leaves its grandchildren alive while
+       * they keep the inherited stdio open — ssh's `ProxyCommand cloudflared
+       * access ssh` and git's `git-remote-https` are the real cases — so the
+       * timeout stops bounding anything. POSIX: the child is spawned detached,
+       * so it leads its own process group and `-pid` reaches the whole tree.
+       * Windows has no process-group signal and no SIGKILL semantics, so only
+       * the child is killed there: the caller is still never stuck, but a
+       * grandchild may outlive the call.
+       */
+      const killTree = () => {
+        if (process.platform !== 'win32' && typeof child.pid === 'number' && child.pid > 0) {
+          try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* fall through to the direct kill */ }
+        }
         try { child.kill('SIGKILL'); } catch {}
       };
 
@@ -69,7 +89,7 @@ export class NodeProcessRunner implements ProcessRunner {
        * be settled or that `'close'` would resolve a fake success.
        */
       const teardown = () => {
-        killChild();
+        killTree();
         child.stdout?.destroy();
         child.stderr?.destroy();
       };

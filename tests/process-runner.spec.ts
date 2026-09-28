@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { NodeProcessRunner } from '../src/host/process-runner.js';
+
+const itPosix = process.platform === 'win32' ? it.skip : it;
 
 /**
  * A child that never emits `'close'` — the real-world shape when a grandchild
@@ -101,5 +106,41 @@ describe('process-runner', () => {
     const pending = runner.run('ssh', ['slow'], { input: Buffer.from('x') });
     pending.catch(() => {});
     expect(await outcomeOf(pending, 300)).toBe('still-pending');
+  });
+
+  itPosix('leaves no grandchild behind when the timeout fires', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sync-tree-'));
+    try {
+      const pidFile = join(dir, 'grandchild.pid');
+      const runner = new NodeProcessRunner();
+      const started = Date.now();
+      await expect(
+        runner.run('bash', ['-c', `sleep 31.3 & echo $! > "${pidFile}"; wait`], { timeoutMs: 300 }),
+      ).rejects.toThrow(/timed out after 300ms/);
+      expect(Date.now() - started).toBeLessThan(5000);
+      const pid = Number((await readFile(pidFile, 'utf8')).trim());
+      expect(pid).toBeGreaterThan(0);
+      let alive = true;
+      for (let i = 0; i < 60 && alive; i += 1) {
+        await new Promise((r) => setTimeout(r, 50));
+        try { process.kill(pid, 0); } catch { alive = false; }
+      }
+      expect(alive, `grandchild ${pid} survived the timeout kill`).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps progress lines already delivered when the timeout rejects', async () => {
+    const child = fakeChild();
+    const lines: string[] = [];
+    const runner = new NodeProcessRunner({ spawn: (() => child) as any });
+    const outcome = outcomeOf(
+      runner.run('ssh', ['x'], { timeoutMs: 50, onLine: (l: string) => lines.push(l) }),
+      1500,
+    );
+    child.stdout.emit('data', Buffer.from('first\n'));
+    expect(await outcome).toMatch(/^rejected: /);
+    expect(lines).toEqual(['first']);
   });
 });
