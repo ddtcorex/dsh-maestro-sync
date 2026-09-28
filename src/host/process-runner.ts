@@ -13,32 +13,82 @@ export interface ProcessRunner {
 /** Maximum combined output before we kill the child (fail-closed, avoids OOM). */
 const MAX_BUFFER_BYTES = 20 * 1024 * 1024;
 
+export interface NodeProcessRunnerOptions {
+  /**
+   * Injectable spawn. Tests need a child that never emits `'close'` (a
+   * grandchild holding the stdio pipes does that for real), which no real
+   * process can reproduce deterministically.
+   */
+  spawn?: typeof spawn;
+}
+
 export class NodeProcessRunner implements ProcessRunner {
+  private readonly spawnChild: typeof spawn;
+
+  constructor(options: NodeProcessRunnerOptions = {}) {
+    this.spawnChild = options.spawn ?? spawn;
+  }
+
   async run(file: string, args: readonly string[], options?: { input?: Buffer; timeoutMs?: number; onLine?: (line: string) => void }): Promise<ProcessResult> {
     return new Promise<ProcessResult>((resolve, reject) => {
       // argv-only, never shell — caller may pass filenames with spaces/metachars as single argv items
-      const child = spawn(file, args as string[], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+      const child = this.spawnChild(file, args as string[], { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];
       let stdoutLen = 0;
       let stderrLen = 0;
       let timeout: NodeJS.Timeout | undefined;
-      let timedOut = false;
-      let killedForBounds = false;
+      let settled = false;
       // line-buffered stdout delivery for progress callbacks (ssh sha256sum streaming)
       let lineBuf = '';
 
-      const killForBounds = () => {
-        if (killedForBounds) return;
-        killedForBounds = true;
+      /**
+       * Single owner of the promise's fate.
+       *
+       * The timeout, `'error'` and `'close'` race for it and the first caller
+       * wins; later ones are dropped. Without that, a child that finally closes
+       * after a timeout kill would resolve a promise the caller was already told
+       * failed. Every path clears the timer here, so no branch can leave one
+       * armed.
+       */
+      const settle = (finish: () => void) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        finish();
+      };
+
+      /** Kill the child directly. Task 2 widened this to the whole process tree. */
+      const killChild = () => {
         try { child.kill('SIGKILL'); } catch {}
       };
 
+      /**
+       * Kill, then release the pipes. Order is load-bearing: destroying the
+       * stdio streams can make Node emit `'close'`, so the outcome must already
+       * be settled or that `'close'` would resolve a fake success.
+       */
+      const teardown = () => {
+        killChild();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      };
+
+      const killForBounds = () => {
+        if (settled) return;
+        settle(() => reject(new Error(`process "${file}" output exceeded ${MAX_BUFFER_BYTES} bytes`)));
+        teardown();
+      };
+
       if (options?.timeoutMs) {
+        const timeoutMs = options.timeoutMs;
         timeout = setTimeout(() => {
-          timedOut = true;
-          try { child.kill('SIGKILL'); } catch {}
-        }, options.timeoutMs);
+          // Reject at the deadline instead of waiting for `'close'`: a grandchild
+          // that inherited the pipes keeps `'close'` from firing at all, which is
+          // what made this "timeout" unbounded.
+          settle(() => reject(new Error(`process "${file} ${args.join(' ')}" timed out after ${timeoutMs}ms`)));
+          teardown();
+        }, timeoutMs);
       }
 
       const deliverLines = () => {
@@ -75,25 +125,15 @@ export class NodeProcessRunner implements ProcessRunner {
       });
 
       child.on('error', (err) => {
-        if (timeout) clearTimeout(timeout);
-        reject(err);
+        settle(() => reject(err));
       });
 
       child.on('close', (code) => {
-        if (timeout) clearTimeout(timeout);
-        if (timedOut) {
-          reject(new Error(`process "${file} ${args.join(' ')}" timed out after ${options?.timeoutMs}ms`));
-          return;
-        }
-        if (killedForBounds) {
-          reject(new Error(`process "${file}" output exceeded ${MAX_BUFFER_BYTES} bytes`));
-          return;
-        }
-        resolve({
+        settle(() => resolve({
           stdout: Buffer.concat(stdoutChunks),
           stderr: Buffer.concat(stderrChunks),
           exitCode: code ?? 0,
-        });
+        }));
       });
 
       if (options?.input) {
