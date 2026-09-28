@@ -156,12 +156,18 @@ export class NodeProcessRunner implements ProcessRunner {
         }));
       });
 
+      // A stdin pipe whose reader already exited reports EPIPE as an
+      // asynchronous stream `'error'` event, not as a throw — and an unhandled
+      // stream error becomes a process-level uncaughtException, which the boot
+      // guard turns into `proc.exit(1)`. Swallowing it here is correct: the
+      // child is gone, and its exit status (not the failed write) is what the
+      // caller acts on. Measured before this listener: a 1 MiB write into
+      // `bash -c 'exit 0'` escaped as EPIPE on 20/20 attempts.
+      child.stdin?.on('error', () => {});
       if (options?.input) {
         try { child.stdin?.write(options.input); } catch {}
-        child.stdin?.end();
-      } else {
-        child.stdin?.end();
       }
+      try { child.stdin?.end(); } catch {}
     });
   }
 }

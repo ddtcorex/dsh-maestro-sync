@@ -17,12 +17,13 @@ const itPosix = process.platform === 'win32' ? it.skip : it;
  */
 function fakeChild() {
   const listeners = new Map<string, Array<(...a: any[]) => void>>();
-  const stream = () => Object.assign(new EventEmitter(), { destroy: vi.fn() });
   const child: any = {
-    pid: 4242,
-    stdout: stream(),
-    stderr: stream(),
-    stdin: { write: vi.fn(), end: vi.fn() },
+    // `pid: 0` is deliberate: killTree() must never signal a process group it
+    // did not create, and the `pid > 0` guard sends this fake down the direct
+    // kill branch. A realistic-looking pid (4242) would make the suite SIGKILL
+    // an unrelated group if that pgid happened to exist.
+    pid: 0,
+    stdin: { write: vi.fn(), end: vi.fn(), on: vi.fn() },
     on(event: string, fn: (...a: any[]) => void) {
       listeners.set(event, [...(listeners.get(event) ?? []), fn]);
       return child;
@@ -32,6 +33,15 @@ function fakeChild() {
     },
     kill: vi.fn(() => true),
   };
+  // A real child's `'close'` fires once every stdio holder is released, so a
+  // destroy-triggered close is exactly the race teardown() must not lose.
+  const stream = () => {
+    const s: any = new EventEmitter();
+    s.destroy = () => { child.emit('close', null); };
+    return s;
+  };
+  child.stdout = stream();
+  child.stderr = stream();
   return child;
 }
 
@@ -82,13 +92,16 @@ describe('process-runner', () => {
     expect(child.kill).toHaveBeenCalled();
   });
 
-  it('does not flip to success when a late close arrives', async () => {
+  it('does not flip to success when the teardown close arrives', async () => {
     const child = fakeChild();
     const runner = new NodeProcessRunner({ spawn: (() => child) as any });
     const outcome = await outcomeOf(runner.run('ssh', ['nowhere'], { timeoutMs: 50 }), 1500);
+    // teardown() already destroyed the pipes, and the fake emits 'close' from
+    // destroy — so the close that could flip a rejection into a success has
+    // already been delivered by the time this line runs.
     child.emit('close', 0);
     await new Promise((r) => setTimeout(r, 20));
-    expect(outcome).toMatch(/^rejected: /);
+    expect(outcome).toBe('rejected: process "ssh nowhere" timed out after 50ms');
   });
 
   it('rejects when the output bound is exceeded, without waiting for close', async () => {
@@ -101,11 +114,33 @@ describe('process-runner', () => {
 
   it('stays unbounded without a timeout, and survives a dead stdin', async () => {
     const child = fakeChild();
-    child.stdin = { write: () => { throw new Error('EPIPE'); }, end: vi.fn() };
+    child.stdin = { write: () => { throw new Error('EPIPE'); }, end: vi.fn(), on: vi.fn() };
     const runner = new NodeProcessRunner({ spawn: (() => child) as any });
     const pending = runner.run('ssh', ['slow'], { input: Buffer.from('x') });
     pending.catch(() => {});
     expect(await outcomeOf(pending, 300)).toBe('still-pending');
+  });
+
+  it('does not let a dead stdin pipe reach uncaughtException', async () => {
+    const runner = new NodeProcessRunner();
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown) => { uncaught.push(err); };
+    process.on('uncaughtException', onUncaught);
+    try {
+      // 1 MiB, not 4 KiB: a small write usually lands in the pipe buffer before
+      // the child exits (measured 1/20 attempts on this host), while 1 MiB
+      // flushes into a closed pipe every time (measured 20/20) — so this pins
+      // the async `'error'` path deterministically rather than by luck.
+      const result = await runner.run('bash', ['-c', 'exit 0'], {
+        input: Buffer.alloc(1024 * 1024),
+        timeoutMs: 5000,
+      });
+      expect(result.exitCode).toBe(0);
+      await new Promise((r) => setTimeout(r, 250));
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
   });
 
   itPosix('leaves no grandchild behind when the timeout fires', async () => {
