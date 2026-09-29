@@ -12,7 +12,7 @@ half (Node CLI/RPC/tools) and a client half (Settings UI).
 Names by boundary: npm package = `@ddtcorex/dsh-maestro-sync`; Cordis patch row id = `dsh-maestro-sync`.
 
 Part of the Maestro Harness suite. **Opt-in plugin**: it is not installed by the
-default web profile or the `dsh-maestro-meta` bundle — add it explicitly with
+default web profile — add it explicitly with
 `dsh plugin add @ddtcorex/dsh-maestro-sync` (or a `link:` dependency in the
 profile) when you want it.
 
